@@ -290,7 +290,7 @@ jobs:
       run: |
         echo "🔍 Performing pre-deployment health check..."
         # Check if previous deployment is healthy
-        curl -f http://sandbox.educore-lms.com/health/ || echo "Previous deployment not accessible"
+        curl -f http://localhost:8001/health/ || echo "Previous deployment not accessible"
     
     - name: Deploy to Sandbox
       run: |
@@ -324,7 +324,7 @@ jobs:
       run: |
         echo "🏥 Performing post-deployment health check..."
         for i in {1..10}; do
-          if curl -f http://sandbox.educore-lms.com/health/; then
+          if curl -f http://localhost:8001/health/; then
             echo "✅ Sandbox deployment successful!"
             exit 0
           fi
@@ -369,7 +369,7 @@ jobs:
       run: |
         echo "🔍 Performing pre-deployment health check..."
         # Check if previous deployment is healthy
-        curl -f http://qa.educore-lms.com/health/ || echo "Previous deployment not accessible"
+        curl -f http://localhost:8002/health/ || echo "Previous deployment not accessible"
     
     - name: Deploy to QA
       run: |
@@ -408,7 +408,7 @@ jobs:
       run: |
         echo "🏥 Performing post-deployment health check..."
         for i in {1..10}; do
-          if curl -f http://qa.educore-lms.com/health/; then
+          if curl -f http://localhost:8002/health/; then
             echo "✅ QA deployment successful!"
             exit 0
           fi
@@ -468,7 +468,7 @@ jobs:
     - name: Pre-deployment Health Check
       run: |
         echo "🔍 Performing pre-deployment health check..."
-        curl -f http://uat.educore-lms.com/health/ || echo "Previous deployment not accessible"
+        curl -f http://localhost:8003/health/ || echo "Previous deployment not accessible"
     
     - name: Deploy to UAT
       run: |
@@ -513,14 +513,14 @@ jobs:
         echo "⚡ Running basic performance tests..."
         # Simple load test
         for i in {1..5}; do
-          curl -w "Response time: %{time_total}s\n" -o /dev/null -s http://uat.educore-lms.com/
+          curl -w "Response time: %{time_total}s\n" -o /dev/null -s http://localhost:8003/
         done
     
     - name: Health Check
       run: |
         echo "🏥 Performing comprehensive health check..."
         for i in {1..15}; do
-          if curl -f http://uat.educore-lms.com/health/; then
+          if curl -f http://localhost:8003/health/; then
             echo "✅ UAT deployment successful!"
             exit 0
           fi
@@ -619,7 +619,7 @@ jobs:
       run: |
         echo "🔍 Performing pre-deployment validation..."
         # Check current production health
-        curl -f https://educore-lms.com/health/ || echo "Production health check failed"
+        curl -f http://localhost:8005/health/ || echo "Production health check failed"
         
         # Validate Docker image exists
         docker pull ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ needs.determine-environment.outputs.docker_tag }}
@@ -690,7 +690,7 @@ jobs:
       run: |
         echo "🏥 Performing comprehensive production health check..."
         for i in {1..20}; do
-          if curl -f https://educore-lms.com/health/; then
+          if curl -f http://localhost:8005/health/; then
             echo "✅ Production deployment successful!"
             # Clean up green environment
             export COMPOSE_PROJECT_NAME=educore_green
@@ -707,9 +707,9 @@ jobs:
       run: |
         echo "🔥 Running production smoke tests..."
         # Test critical endpoints
-        curl -f https://educore-lms.com/api/health/
-        curl -f https://educore-lms.com/admin/login/
-        curl -f https://educore-lms.com/courses/
+        curl -f http://localhost:8005/api/health/
+        curl -f http://localhost:8005/admin/login/
+        curl -f http://localhost:8005/courses/
         
         # Test database connectivity
         docker-compose -f docker-compose.prod.yml exec -T web python manage.py check --database default
