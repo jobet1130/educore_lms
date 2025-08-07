@@ -544,7 +544,29 @@ jobs:
         docker-compose -f docker-compose.uat.yml up -d
         
         # Wait for containers to be ready
-        sleep 45
+        sleep 90  # Increased from 45s to account for health check start period
+        
+        # Check container health before proceeding
+        echo "Checking container health..."
+        for i in {1..15}; do
+          WEB_STATUS=$(docker-compose -f docker-compose.uat.yml ps web | grep -o "Up.*" || echo "Not running")
+          DB_STATUS=$(docker-compose -f docker-compose.uat.yml ps db | grep -o "Up.*" || echo "Not running")
+          
+          echo "Web container: $WEB_STATUS"
+          echo "DB container: $DB_STATUS"
+          
+          if echo "$WEB_STATUS" | grep -q "healthy" && echo "$DB_STATUS" | grep -q "healthy"; then
+            echo "All containers are healthy and ready"
+            break
+          elif [ $i -eq 15 ]; then
+            echo "❌ Containers failed to become healthy after 15 attempts"
+            docker-compose -f docker-compose.uat.yml logs
+            exit 1
+          else
+            echo "⏳ Waiting for containers to be healthy... ($i/15)"
+            sleep 15
+          fi
+        done
     
     - name: Database Migration
       env:
@@ -553,13 +575,113 @@ jobs:
         ALLOWED_HOSTS: localhost,127.0.0.1
         DB_PASSWORD: postgres
       run: |
-        echo "Running database migrations..."
-        docker-compose -f docker-compose.uat.yml exec -T web python manage.py migrate --noinput
+        # Wait for database to be ready
+        echo "Checking database connectivity..."
+        for i in {1..10}; do
+          if docker-compose -f docker-compose.uat.yml exec -T db pg_isready -U postgres > /dev/null 2>&1; then
+            echo "Database is ready"
+            break
+          else
+            echo "Waiting for database to be ready... ($i/10)"
+            sleep 5
+          fi
+        done
+        
+        # Ensure containers are healthy before migration
+        echo "Validating container health before migration..."
+        for i in {1..5}; do
+          WEB_STATUS=$(docker-compose -f docker-compose.uat.yml ps web | grep -o "Up.*" || echo "Not running")
+          DB_STATUS=$(docker-compose -f docker-compose.uat.yml ps db | grep -o "Up.*" || echo "Not running")
+          
+          if echo "$WEB_STATUS" | grep -q "healthy" && echo "$DB_STATUS" | grep -q "healthy"; then
+            echo "✅ Containers are healthy, proceeding with migration"
+            break
+          elif echo "$WEB_STATUS" | grep -q "restarting" || echo "$DB_STATUS" | grep -q "restarting"; then
+            echo "⚠️ Container is restarting, waiting... ($i/5)"
+            sleep 20
+          elif [ $i -eq 5 ]; then
+            echo "❌ Containers are not healthy after 5 attempts"
+            echo "Web container: $WEB_STATUS"
+            echo "DB container: $DB_STATUS"
+            docker-compose -f docker-compose.uat.yml logs web
+            docker-compose -f docker-compose.uat.yml logs db
+            exit 1
+          else
+            echo "⏳ Waiting for containers to be healthy... ($i/5)"
+            sleep 15
+          fi
+        done
+        
+        # Run migrations with enhanced retry logic
+        echo "🔄 Running database migrations..."
+        for i in {1..5}; do
+          # Check if container is still healthy before each attempt
+          if docker-compose -f docker-compose.uat.yml ps web | grep -q "restarting"; then
+            echo "⚠️ Web container is restarting, waiting before retry..."
+            sleep 30
+            continue
+          fi
+          
+          if docker-compose -f docker-compose.uat.yml exec -T web python manage.py migrate --noinput; then
+            echo "✅ Database migrations completed successfully"
+            break
+          else
+            echo "❌ Migration attempt $i failed. Retrying in 15 seconds..."
+            if [ $i -eq 5 ]; then
+              echo "❌ All migration attempts failed. Checking container logs..."
+              docker-compose -f docker-compose.uat.yml logs web
+              exit 1
+            fi
+            sleep 15
+          fi
+        done
     
     - name: Collect Static Files
       run: |
-        echo "Collecting static files..."
-        docker-compose -f docker-compose.uat.yml exec -T web python manage.py collectstatic --noinput
+        # Ensure web container is healthy before collecting static files
+        echo "Validating web container health before static files collection..."
+        for i in {1..3}; do
+          WEB_STATUS=$(docker-compose -f docker-compose.uat.yml ps web | grep -o "Up.*" || echo "Not running")
+          
+          if echo "$WEB_STATUS" | grep -q "healthy"; then
+            echo "✅ Web container is healthy, proceeding with static files collection"
+            break
+          elif echo "$WEB_STATUS" | grep -q "restarting"; then
+            echo "⚠️ Web container is restarting, waiting... ($i/3)"
+            sleep 20
+          elif [ $i -eq 3 ]; then
+            echo "❌ Web container is not healthy after 3 attempts: $WEB_STATUS"
+            docker-compose -f docker-compose.uat.yml logs web
+            exit 1
+          else
+            echo "⏳ Waiting for web container to be healthy... ($i/3)"
+            sleep 10
+          fi
+        done
+        
+        # Collect static files with enhanced retry logic
+        echo "📁 Collecting static files..."
+        for i in {1..3}; do
+          # Check if container is still healthy before each attempt
+          if docker-compose -f docker-compose.uat.yml ps web | grep -q "restarting"; then
+            echo "⚠️ Web container is restarting, waiting before retry..."
+            sleep 20
+            continue
+          fi
+          
+          if docker-compose -f docker-compose.uat.yml exec -T web python manage.py collectstatic --noinput; then
+            echo "✅ Static files collected successfully"
+            break
+          else
+            echo "❌ Static files collection attempt $i failed. Retrying in 10 seconds..."
+            if [ $i -eq 3 ]; then
+              echo "❌ All static files collection attempts failed. Checking container logs..."
+              docker-compose -f docker-compose.uat.yml logs web
+              exit 1
+            fi
+            sleep 10
+          fi
+        done
     
     - name: Load Test Data
       run: |

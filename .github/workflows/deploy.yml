@@ -256,18 +256,27 @@ jobs:
         
         # Wait for services to be healthy
         echo "Waiting for services to be healthy..."
-        sleep 60
+        sleep 90  # Increased from 60s to account for 40s start period + health checks
         
         # Check service health and wait for containers to be ready
         echo "Checking container health..."
-        for i in {1..12}; do
-          if docker-compose -f $COMPOSE_FILE -p $PROJECT_NAME ps | grep -q "Up (healthy)\|Up [0-9]"; then
-            echo "Containers are running"
+        for i in {1..15}; do
+          WEB_STATUS=$(docker-compose -f $COMPOSE_FILE -p $PROJECT_NAME ps web | grep -o "Up.*" || echo "Not running")
+          DB_STATUS=$(docker-compose -f $COMPOSE_FILE -p $PROJECT_NAME ps db | grep -o "Up.*" || echo "Not running")
+          
+          echo "Web container: $WEB_STATUS"
+          echo "DB container: $DB_STATUS"
+          
+          if echo "$WEB_STATUS" | grep -q "healthy" && echo "$DB_STATUS" | grep -q "healthy"; then
+            echo "All containers are healthy and ready"
             break
+          elif [ $i -eq 15 ]; then
+            echo "Containers failed to become healthy after 15 attempts"
+            docker-compose -f $COMPOSE_FILE -p $PROJECT_NAME logs
+            exit 1
           else
-            echo "Waiting for containers to be ready... ($i/12)"
-            docker-compose -f $COMPOSE_FILE -p $PROJECT_NAME ps
-            sleep 10
+            echo "Waiting for containers to be healthy... ($i/15)"
+            sleep 15  # Increased from 10s for better stability
           fi
         done
         
@@ -308,23 +317,52 @@ jobs:
           fi
         done
         
-        # Ensure web container is running before migration
-        echo "Checking web container status..."
-        if ! docker-compose -f $COMPOSE_FILE -p $PROJECT_NAME ps web | grep -q "Up"; then
-          echo "Web container is not running. Checking logs..."
-          docker-compose -f $COMPOSE_FILE -p $PROJECT_NAME logs web
-          exit 1
-        fi
+        # Ensure containers are healthy before migration
+        echo "Validating container health before migration..."
+        for i in {1..5}; do
+          WEB_STATUS=$(docker-compose -f $COMPOSE_FILE -p $PROJECT_NAME ps web | grep -o "Up.*" || echo "Not running")
+          DB_STATUS=$(docker-compose -f $COMPOSE_FILE -p $PROJECT_NAME ps db | grep -o "Up.*" || echo "Not running")
+          
+          if echo "$WEB_STATUS" | grep -q "healthy" && echo "$DB_STATUS" | grep -q "healthy"; then
+            echo "Containers are healthy, proceeding with migration"
+            break
+          elif echo "$WEB_STATUS" | grep -q "restarting" || echo "$DB_STATUS" | grep -q "restarting"; then
+            echo "Container is restarting, waiting... ($i/5)"
+            sleep 20
+          elif [ $i -eq 5 ]; then
+            echo "Containers are not healthy after 5 attempts"
+            echo "Web container: $WEB_STATUS"
+            echo "DB container: $DB_STATUS"
+            docker-compose -f $COMPOSE_FILE -p $PROJECT_NAME logs web
+            docker-compose -f $COMPOSE_FILE -p $PROJECT_NAME logs db
+            exit 1
+          else
+            echo "Waiting for containers to be healthy... ($i/5)"
+            sleep 15
+          fi
+        done
         
-        # Run migrations with retry logic
+        # Run migrations with enhanced retry logic
         echo "Running database migrations..."
-        for i in {1..3}; do
+        for i in {1..5}; do
+          # Check if container is still healthy before each attempt
+          if docker-compose -f $COMPOSE_FILE -p $PROJECT_NAME ps web | grep -q "restarting"; then
+            echo "Web container is restarting, waiting before retry..."
+            sleep 30
+            continue
+          fi
+          
           if docker-compose -f $COMPOSE_FILE -p $PROJECT_NAME exec -T web python manage.py migrate --noinput; then
             echo "Database migrations completed successfully"
             break
           else
-            echo "Migration attempt $i failed. Retrying in 10 seconds..."
-            sleep 10
+            echo "Migration attempt $i failed. Retrying in 15 seconds..."
+            if [ $i -eq 5 ]; then
+              echo "All migration attempts failed. Checking container logs..."
+              docker-compose -f $COMPOSE_FILE -p $PROJECT_NAME logs web
+              exit 1
+            fi
+            sleep 15
           fi
         done
     
@@ -346,21 +384,48 @@ jobs:
         
         echo "Collecting static files for $ENV environment"
         
-        # Ensure web container is running before collecting static files
-        if ! docker-compose -f $COMPOSE_FILE -p $PROJECT_NAME ps web | grep -q "Up"; then
-          echo "Web container is not running. Checking logs..."
-          docker-compose -f $COMPOSE_FILE -p $PROJECT_NAME logs web
-          exit 1
-        fi
-        
-        # Collect static files with retry logic
+        # Ensure web container is healthy before collecting static files
+        echo "Validating web container health before static files collection..."
         for i in {1..3}; do
+          WEB_STATUS=$(docker-compose -f $COMPOSE_FILE -p $PROJECT_NAME ps web | grep -o "Up.*" || echo "Not running")
+          
+          if echo "$WEB_STATUS" | grep -q "healthy"; then
+            echo "Web container is healthy, proceeding with static files collection"
+            break
+          elif echo "$WEB_STATUS" | grep -q "restarting"; then
+            echo "Web container is restarting, waiting... ($i/3)"
+            sleep 20
+          elif [ $i -eq 3 ]; then
+            echo "Web container is not healthy after 3 attempts: $WEB_STATUS"
+            docker-compose -f $COMPOSE_FILE -p $PROJECT_NAME logs web
+            exit 1
+          else
+            echo "Waiting for web container to be healthy... ($i/3)"
+            sleep 10
+          fi
+        done
+        
+        # Collect static files with enhanced retry logic
+        echo "📁 Collecting static files..."
+        for i in {1..3}; do
+          # Check if container is still healthy before each attempt
+          if docker-compose -f $COMPOSE_FILE -p $PROJECT_NAME ps web | grep -q "restarting"; then
+            echo "Web container is restarting, waiting before retry..."
+            sleep 20
+            continue
+          fi
+          
           if docker-compose -f $COMPOSE_FILE -p $PROJECT_NAME exec -T web python manage.py collectstatic --noinput; then
             echo "Static files collected successfully"
             break
           else
-            echo "Static files collection attempt $i failed. Retrying in 5 seconds..."
-            sleep 5
+            echo "Static files collection attempt $i failed. Retrying in 10 seconds..."
+            if [ $i -eq 3 ]; then
+              echo "All static files collection attempts failed. Checking container logs..."
+              docker-compose -f $COMPOSE_FILE -p $PROJECT_NAME logs web
+              exit 1
+            fi
+            sleep 10
           fi
         done
     
