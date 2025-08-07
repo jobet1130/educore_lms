@@ -919,6 +919,12 @@ EOF
              break
            fi
            
+           # Try external port access
+           if curl -f http://localhost:8004/health/ 2>/dev/null; then
+             echo "✅ Health check passed (external port)"
+             break
+           fi
+           
            if [ $i -eq 30 ]; then
              echo "❌ Health check failed after 30 attempts"
              echo "📋 Container status:"

@@ -208,24 +208,24 @@ jobs:
         echo "Creating $ENV_FILE for $ENV environment"
         
         # Create environment-specific .env file
-        cat > $ENV_FILE << EOF
-DJANGO_SETTINGS_MODULE=educore_lms.settings.$ENV
-SECRET_KEY=${{ secrets.DJANGO_SECRET_KEY }}
-DATABASE_URL=${{ secrets.DATABASE_URL }}
-REDIS_URL=${{ secrets.REDIS_URL }}
-EMAIL_HOST_PASSWORD=${{ secrets.EMAIL_HOST_PASSWORD }}
-SENTRY_DSN=${{ secrets.SENTRY_DSN }}
-ENVIRONMENT=$ENV
-DOCKER_IMAGE_TAG=${{ needs.determine-environment.outputs.docker_tag }}
-DB_NAME=${{ secrets.DB_NAME }}
-DB_USER=${{ secrets.DB_USER }}
-DB_PASSWORD=${{ secrets.DB_PASSWORD }}
-DB_HOST=db
-DB_PORT=5432
-ALLOWED_HOSTS=${{ secrets.ALLOWED_HOSTS }}
-DEBUG=0
-DJANGO_LOG_LEVEL=ERROR
-EOF
+        {
+          echo "DJANGO_SETTINGS_MODULE=educore_lms.settings.$ENV"
+          echo "SECRET_KEY=${{ secrets.DJANGO_SECRET_KEY }}"
+          echo "DATABASE_URL=${{ secrets.DATABASE_URL }}"
+          echo "REDIS_URL=${{ secrets.REDIS_URL }}"
+          echo "EMAIL_HOST_PASSWORD=${{ secrets.EMAIL_HOST_PASSWORD }}"
+          echo "SENTRY_DSN=${{ secrets.SENTRY_DSN }}"
+          echo "ENVIRONMENT=$ENV"
+          echo "DOCKER_IMAGE_TAG=${{ needs.determine-environment.outputs.docker_tag }}"
+          echo "DB_NAME=${{ secrets.DB_NAME }}"
+          echo "DB_USER=${{ secrets.DB_USER }}"
+          echo "DB_PASSWORD=${{ secrets.DB_PASSWORD }}"
+          echo "DB_HOST=db"
+          echo "DB_PORT=5432"
+          echo "ALLOWED_HOSTS=${{ secrets.ALLOWED_HOSTS }}"
+          echo "DEBUG=0"
+          echo "DJANGO_LOG_LEVEL=ERROR"
+        } > $ENV_FILE
     
     - name: Deploy with Docker Compose
       run: |
@@ -262,10 +262,10 @@ EOF
         echo "Checking container health..."
         for i in {1..12}; do
           if docker-compose -f $COMPOSE_FILE -p $PROJECT_NAME ps | grep -q "Up (healthy)\|Up [0-9]"; then
-            echo "✅ Containers are running"
+            echo "Containers are running"
             break
           else
-            echo "⏳ Waiting for containers to be ready... ($i/12)"
+            echo "Waiting for containers to be ready... ($i/12)"
             docker-compose -f $COMPOSE_FILE -p $PROJECT_NAME ps
             sleep 10
           fi
@@ -296,10 +296,10 @@ EOF
         echo "Checking database connectivity..."
         for i in {1..10}; do
           if docker-compose -f $COMPOSE_FILE -p $PROJECT_NAME exec -T db pg_isready -U ${DB_USER:-postgres} > /dev/null 2>&1; then
-            echo "✅ Database is ready"
+            echo "Database is ready"
             break
           else
-            echo "⏳ Waiting for database to be ready... ($i/10)"
+            echo "Waiting for database to be ready... ($i/10)"
             sleep 5
           fi
         done
@@ -307,7 +307,7 @@ EOF
         # Ensure web container is running before migration
         echo "Checking web container status..."
         if ! docker-compose -f $COMPOSE_FILE -p $PROJECT_NAME ps web | grep -q "Up"; then
-          echo "❌ Web container is not running. Checking logs..."
+          echo "Web container is not running. Checking logs..."
           docker-compose -f $COMPOSE_FILE -p $PROJECT_NAME logs web
           exit 1
         fi
@@ -316,10 +316,10 @@ EOF
         echo "Running database migrations..."
         for i in {1..3}; do
           if docker-compose -f $COMPOSE_FILE -p $PROJECT_NAME exec -T web python manage.py migrate --noinput; then
-            echo "✅ Database migrations completed successfully"
+            echo "Database migrations completed successfully"
             break
           else
-            echo "⚠️ Migration attempt $i failed. Retrying in 10 seconds..."
+            echo "Migration attempt $i failed. Retrying in 10 seconds..."
             sleep 10
           fi
         done
@@ -344,7 +344,7 @@ EOF
         
         # Ensure web container is running before collecting static files
         if ! docker-compose -f $COMPOSE_FILE -p $PROJECT_NAME ps web | grep -q "Up"; then
-          echo "❌ Web container is not running. Checking logs..."
+          echo "Web container is not running. Checking logs..."
           docker-compose -f $COMPOSE_FILE -p $PROJECT_NAME logs web
           exit 1
         fi
@@ -352,10 +352,10 @@ EOF
         # Collect static files with retry logic
         for i in {1..3}; do
           if docker-compose -f $COMPOSE_FILE -p $PROJECT_NAME exec -T web python manage.py collectstatic --noinput; then
-            echo "✅ Static files collected successfully"
+            echo "Static files collected successfully"
             break
           else
-            echo "⚠️ Static files collection attempt $i failed. Retrying in 5 seconds..."
+            echo "Static files collection attempt $i failed. Retrying in 5 seconds..."
             sleep 5
           fi
         done
@@ -370,16 +370,16 @@ EOF
         # Wait for application to be ready
         for i in {1..30}; do
           if curl -f -s "$DEPLOY_URL/health/" > /dev/null; then
-            echo "✅ Health check passed"
+            echo "Health check passed"
             break
           else
-            echo "⏳ Waiting for application to be ready... ($i/30)"
+            echo "Waiting for application to be ready... ($i/30)"
             sleep 10
           fi
         done
         
         # Final health check
-        curl -f "$DEPLOY_URL/health/" || (echo "❌ Health check failed" && exit 1)
+        curl -f "$DEPLOY_URL/health/" || (echo "Health check failed" && exit 1)
 
   # Post-deployment tasks
   post-deployment:
@@ -394,10 +394,10 @@ EOF
         ENV="${{ needs.determine-environment.outputs.environment }}"
         DEPLOY_URL="${{ needs.determine-environment.outputs.deploy_url }}"
         
-        echo "🚀 Successfully deployed to $ENV environment"
-        echo "📍 Application URL: $DEPLOY_URL"
-        echo "🏷️ Docker tag: ${{ needs.determine-environment.outputs.docker_tag }}"
-        echo "📝 Commit: ${{ github.sha }}"
+        echo "Successfully deployed to $ENV environment"
+        echo "Application URL: $DEPLOY_URL"
+        echo "Docker tag: ${{ needs.determine-environment.outputs.docker_tag }}"
+        echo "Commit: ${{ github.sha }}"
     
     - name: Update deployment status
       uses: actions/github-script@v6
@@ -467,7 +467,7 @@ EOF
         
         PROJECT_NAME="educore-$ENV"
         
-        echo "🔄 Rolling back $ENV deployment"
+        echo "Rolling back $ENV deployment"
         
         # This would typically involve deploying the previous known good version
         # For now, we'll restart the current services
@@ -475,5 +475,5 @@ EOF
     
     - name: Notify rollback
       run: |
-        echo "⚠️ Deployment failed and rollback initiated"
-        echo "🔍 Please check the deployment logs for details"
+        echo "Deployment failed and rollback initiated"
+        echo "Please check the deployment logs for details"
