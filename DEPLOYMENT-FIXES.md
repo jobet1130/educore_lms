@@ -161,6 +161,33 @@ Additionally, there were warnings about unset environment variables and missing 
   - `local-backup.ps1` (Windows PowerShell backup script)
   - `README.md` (Documentation for backup scripts)
 
+### 5. Fixed Django Settings Module Structure
+
+**Problem:** Performance testing workflow and other CI/CD processes were failing with `ModuleNotFoundError: No module named 'educore_lms.settings.testing'` because the settings was a single file instead of a package structure.
+
+**Root Cause:** The GitHub workflows expected `educore_lms.settings.testing` module but the project only had a single `settings.py` file, not a settings package with separate modules for different environments.
+
+**Solution:**
+- Converted single `settings.py` file into a settings package structure
+- Created `settings/base.py` with the original settings
+- Created `settings/testing.py` with test-specific configurations
+- Created `settings/production.py` with production-specific configurations
+- Added `settings/__init__.py` to maintain backward compatibility
+
+**Changes Made:**
+- Moved `educore_lms/settings.py` to `educore_lms/settings/base.py`
+- Created `educore_lms/settings/__init__.py` that imports from base.py
+- Created `educore_lms/settings/testing.py` with:
+  - SQLite in-memory database for faster tests
+  - Simplified password hashers for testing
+  - Disabled logging during tests
+  - Test-specific cache and email backends
+- Created `educore_lms/settings/production.py` with:
+  - Enhanced security settings
+  - Production logging configuration
+  - Redis cache configuration
+  - SMTP email configuration
+
 ## Files Modified
 
 - `.github/workflows/deploy.yml` - Enhanced deployment workflow with fixes
@@ -168,9 +195,13 @@ Additionally, there were warnings about unset environment variables and missing 
 - `backup-scripts/local-backup.sh` - New local backup script for Unix systems
 - `backup-scripts/local-backup.ps1` - New local backup script for Windows
 - `backup-scripts/README.md` - Documentation for backup scripts
+- `educore_lms/settings/base.py` - Moved from settings.py, contains base configuration
+- `educore_lms/settings/__init__.py` - Package initialization for backward compatibility
+- `educore_lms/settings/testing.py` - Test-specific Django settings
+- `educore_lms/settings/production.py` - Production-specific Django settings
 - `DEPLOYMENT-FIXES.md` - This documentation file
 
 ---
 
 *Generated on: $(date)*
-*Issue Resolution: Container restart errors and environment variable mismatches*
+*Issue Resolution: Container restart errors, environment variable mismatches, and Django settings module structure*
