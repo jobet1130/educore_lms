@@ -175,7 +175,7 @@ CSRF_COOKIE_SECURE: false
 ```yaml
 DJANGO_SETTINGS_MODULE: educore_lms.settings.development
 DEBUG: true
-ALLOWED_HOSTS: dev.educore.example.com,localhost,127.0.0.1
+ALLOWED_HOSTS: dev.educore-lms.com,localhost,127.0.0.1
 CORS_ALLOWED_ORIGINS: http://localhost:3000,http://127.0.0.1:3000
 SECURE_SSL_REDIRECT: false
 SESSION_COOKIE_SECURE: false
