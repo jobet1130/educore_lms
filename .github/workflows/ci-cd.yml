@@ -290,7 +290,7 @@ jobs:
       run: |
         echo "Performing pre-deployment health check..."
         # Check if previous deployment is healthy
-        curl.exe -f http://localhost:8001/health/ || echo "Previous deployment not accessible"
+        curl -f http://localhost:8001/health/ || echo "Previous deployment not accessible"
     
     - name: Deploy to Sandbox
       run: |
@@ -311,6 +311,11 @@ jobs:
         sleep 30
     
     - name: Database Migration
+      env:
+        SECRET_KEY: django-insecure-ci-key-for-testing
+        DATABASE_URL: postgres://postgres:postgres@localhost:5433/educore_lms
+        ALLOWED_HOSTS: localhost,127.0.0.1
+        DB_PASSWORD: postgres
       run: |
         echo "Running database migrations..."
         docker-compose -f docker-compose.sandbox.yml exec -T web python manage.py migrate --noinput
@@ -369,7 +374,7 @@ jobs:
       run: |
         echo "Performing pre-deployment health check..."
         # Check if previous deployment is healthy
-        curl.exe -f http://localhost:8002/health/ || echo "Previous deployment not accessible"
+        curl -f http://localhost:8002/health/ || echo "Previous deployment not accessible"
 
     - name: Create environment file
       run: |
@@ -414,6 +419,11 @@ jobs:
         sleep 30
     
     - name: Database Migration
+      env:
+        SECRET_KEY: django-insecure-ci-key-for-testing
+        DATABASE_URL: postgres://postgres:postgres@localhost:5434/educore_lms
+        ALLOWED_HOSTS: localhost,127.0.0.1
+        DB_PASSWORD: postgres
       run: |
         echo "Running database migrations..."
         docker-compose -f docker-compose.qa.yml exec -T web python manage.py migrate --noinput
@@ -492,7 +502,7 @@ jobs:
     - name: Pre-deployment Health Check
       run: |
         echo "Performing pre-deployment health check..."
-        curl.exe -f http://localhost:8003/health/ || echo "Previous deployment not accessible"
+        curl -f http://localhost:8003/health/ || echo "Previous deployment not accessible"
 
     - name: Create environment file
       run: |
@@ -537,6 +547,11 @@ jobs:
         sleep 45
     
     - name: Database Migration
+      env:
+        SECRET_KEY: django-insecure-ci-key-for-testing
+        DATABASE_URL: postgres://postgres:postgres@localhost:5435/educore_lms
+        ALLOWED_HOSTS: localhost,127.0.0.1
+        DB_PASSWORD: postgres
       run: |
         echo "Running database migrations..."
         docker-compose -f docker-compose.uat.yml exec -T web python manage.py migrate --noinput
@@ -667,7 +682,7 @@ jobs:
       run: |
         echo "Performing pre-deployment validation..."
         # Check current production health
-        curl.exe -f http://localhost:8005/health/ || echo "Production health check failed"
+        curl -f http://localhost:8005/health/ || echo "Production health check failed"
         
         # Validate Docker image exists
         docker pull ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ needs.determine-environment.outputs.docker_tag }}
@@ -699,8 +714,8 @@ jobs:
         done
         
         # Run smoke tests
-        curl.exe -f http://localhost:8001/api/health/
-        curl.exe -f http://localhost:8001/admin/login/
+        curl -f http://localhost:8001/api/health/
+        curl -f http://localhost:8001/admin/login/
     
     - name: Database Migration (Green)
       run: |
@@ -755,9 +770,9 @@ jobs:
       run: |
         echo "Running production smoke tests..."
         # Test critical endpoints
-        curl.exe -f http://localhost:8005/api/health/
-        curl.exe -f http://localhost:8005/admin/login/
-        curl.exe -f http://localhost:8005/courses/
+        curl -f http://localhost:8005/api/health/
+        curl -f http://localhost:8005/admin/login/
+        curl -f http://localhost:8005/courses/
         
         # Test database connectivity
         docker-compose -f docker-compose.prod.yml exec -T web python manage.py check --database default
@@ -914,13 +929,13 @@ jobs:
             fi
            
            # Try through nginx proxy
-           if curl.exe -f http://localhost:8081/health/ 2>/dev/null; then
+           if curl -f http://localhost:8081/health/ 2>/dev/null; then
              echo "Health check passed (nginx proxy)"
              break
            fi
            
            # Try external port access
-           if curl.exe -f http://localhost:8004/health/ 2>/dev/null; then
+           if curl -f http://localhost:8004/health/ 2>/dev/null; then
              echo "Health check passed (external port)"
              break
            fi
