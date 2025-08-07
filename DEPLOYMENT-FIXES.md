@@ -138,9 +138,36 @@ Additionally, there were warnings about unset environment variables and missing 
    - Document troubleshooting procedures
    - Maintain environment variable reference
 
+## Additional Fix: Local Backup Issues
+
+### 4. Fixed Local Environment Variable Warnings
+
+**Problem:** Running backup commands locally caused warnings about unset environment variables and missing `.env.prod` file.
+
+**Root Cause:** The `docker-compose.prod.yml` file required environment variables from `.env.prod` file, which is not committed to the repository for security reasons.
+
+**Solution:**
+- Added default values to all environment variables in `docker-compose.prod.yml`
+- Made `.env.prod` file optional by commenting out the `env_file` directive
+- Created local backup scripts that work without production environment setup
+
+**Changes Made:**
+- Updated `docker-compose.prod.yml` to include default values for:
+  - `SECRET_KEY` (with development default)
+  - `DB_USER`, `DB_PASSWORD`, `DB_NAME` (with postgres defaults)
+  - `ALLOWED_HOSTS` (with localhost defaults)
+- Created `backup-scripts/` directory with:
+  - `local-backup.sh` (Linux/macOS backup script)
+  - `local-backup.ps1` (Windows PowerShell backup script)
+  - `README.md` (Documentation for backup scripts)
+
 ## Files Modified
 
 - `.github/workflows/deploy.yml` - Enhanced deployment workflow with fixes
+- `docker-compose.prod.yml` - Added default environment variables and optional .env.prod
+- `backup-scripts/local-backup.sh` - New local backup script for Unix systems
+- `backup-scripts/local-backup.ps1` - New local backup script for Windows
+- `backup-scripts/README.md` - Documentation for backup scripts
 - `DEPLOYMENT-FIXES.md` - This documentation file
 
 ---
