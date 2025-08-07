@@ -38,12 +38,15 @@ jobs:
     steps:
     - name: Determine environment and tag
       id: env
+      env:
+        EVENT_NAME: ${{ github.event_name }}
+        BRANCH_NAME: ${{ github.ref_name }}
       run: |
-        if [[ "${{ github.event_name }}" == "workflow_dispatch" ]]; then
+        if [[ "$EVENT_NAME" == "workflow_dispatch" ]]; then
           echo "environment=sandbox" >> $GITHUB_OUTPUT
           echo "docker_tag=latest" >> $GITHUB_OUTPUT
         else
-          case "${{ github.ref_name }}" in
+          case "$BRANCH_NAME" in
             "main")
               echo "environment=production" >> $GITHUB_OUTPUT
               echo "docker_tag=latest" >> $GITHUB_OUTPUT
@@ -70,19 +73,19 @@ jobs:
               ;;
             feature/*)
               echo "environment=qa" >> $GITHUB_OUTPUT
-              echo "docker_tag=feature-$(echo ${{ github.ref_name }} | sed 's/feature\///')" >> $GITHUB_OUTPUT
+              echo "docker_tag=feature-$(echo "$BRANCH_NAME" | sed 's/feature\///')" >> $GITHUB_OUTPUT
               ;;
             hotfix/*)
               echo "environment=production" >> $GITHUB_OUTPUT
-              echo "docker_tag=hotfix-$(echo ${{ github.ref_name }} | sed 's/hotfix\///')" >> $GITHUB_OUTPUT
+              echo "docker_tag=hotfix-$(echo "$BRANCH_NAME" | sed 's/hotfix\///')" >> $GITHUB_OUTPUT
               ;;
             enhancement/*)
               echo "environment=qa" >> $GITHUB_OUTPUT
-              echo "docker_tag=enhancement-$(echo ${{ github.ref_name }} | sed 's/enhancement\///')" >> $GITHUB_OUTPUT
+              echo "docker_tag=enhancement-$(echo "$BRANCH_NAME" | sed 's/enhancement\///')" >> $GITHUB_OUTPUT
               ;;
             bugfix/*)
               echo "environment=qa" >> $GITHUB_OUTPUT
-              echo "docker_tag=bugfix-$(echo ${{ github.ref_name }} | sed 's/bugfix\///')" >> $GITHUB_OUTPUT
+              echo "docker_tag=bugfix-$(echo "$BRANCH_NAME" | sed 's/bugfix\///')" >> $GITHUB_OUTPUT
               ;;
             *)
               echo "environment=sandbox" >> $GITHUB_OUTPUT
