@@ -449,6 +449,13 @@ jobs:
         sudo chmod +x /usr/local/bin/docker-compose
         docker-compose --version
     
+    - name: Log in to Container Registry
+      uses: docker/login-action@v3
+      with:
+        registry: ${{ env.REGISTRY }}
+        username: ${{ github.actor }}
+        password: ${{ secrets.GITHUB_TOKEN }}
+    
     - name: Pre-deployment Backup
       run: |
         echo "💾 Creating pre-deployment backup..."
