@@ -3,7 +3,7 @@ version: '3.8'
 # Production Environment - High availability and security
 services:
   web:
-    image: ghcr.io/${GITHUB_REPOSITORY:-educore/educore_lms}:${DOCKER_TAG:-latest}
+    image: educore-prod-web:latest
     container_name: educore_lms_web-prod
     ports:
       - "8005:8000"
@@ -35,7 +35,7 @@ services:
     networks:
       - prod_network
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:8000/health/"]
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/health/')"]
       interval: 30s
       timeout: 10s
       retries: 3
