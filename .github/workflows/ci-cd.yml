@@ -370,7 +370,37 @@ jobs:
         echo "🔍 Performing pre-deployment health check..."
         # Check if previous deployment is healthy
         curl -f http://localhost:8002/health/ || echo "Previous deployment not accessible"
-    
+
+    - name: Create environment file
+      run: |
+        echo "Creating .env.qa for QA environment"
+        
+        # Create QA environment .env file
+        cat > .env.qa << EOF
+        DJANGO_SETTINGS_MODULE=educore_lms.settings.qa
+        SECRET_KEY=${{ secrets.DJANGO_SECRET_KEY }}
+        DATABASE_URL=${{ secrets.DATABASE_URL }}
+        REDIS_URL=${{ secrets.REDIS_URL }}
+        EMAIL_HOST_PASSWORD=${{ secrets.EMAIL_HOST_PASSWORD }}
+        AWS_ACCESS_KEY_ID=${{ secrets.AWS_ACCESS_KEY_ID }}
+        AWS_SECRET_ACCESS_KEY=${{ secrets.AWS_SECRET_ACCESS_KEY }}
+        SENTRY_DSN=${{ secrets.SENTRY_DSN }}
+        ENVIRONMENT=qa
+        DOCKER_IMAGE_TAG=${{ needs.determine-environment.outputs.docker_tag }}
+        
+        # Database configuration for QA
+        DB_NAME=${{ secrets.DB_NAME }}
+        DB_USER=${{ secrets.DB_USER }}
+        DB_PASSWORD=${{ secrets.DB_PASSWORD }}
+        DB_HOST=db
+        DB_PORT=5432
+        
+        # Security settings
+        ALLOWED_HOSTS=${{ secrets.ALLOWED_HOSTS }}
+        DEBUG=0
+        DJANGO_LOG_LEVEL=INFO
+        EOF
+
     - name: Deploy to QA
       run: |
         echo "🚀 Deploying to QA environment..."
@@ -469,7 +499,37 @@ jobs:
       run: |
         echo "🔍 Performing pre-deployment health check..."
         curl -f http://localhost:8003/health/ || echo "Previous deployment not accessible"
-    
+
+    - name: Create environment file
+      run: |
+        echo "Creating .env.uat for UAT environment"
+        
+        # Create UAT environment .env file
+        cat > .env.uat << EOF
+        DJANGO_SETTINGS_MODULE=educore_lms.settings.uat
+        SECRET_KEY=${{ secrets.DJANGO_SECRET_KEY }}
+        DATABASE_URL=${{ secrets.DATABASE_URL }}
+        REDIS_URL=${{ secrets.REDIS_URL }}
+        EMAIL_HOST_PASSWORD=${{ secrets.EMAIL_HOST_PASSWORD }}
+        AWS_ACCESS_KEY_ID=${{ secrets.AWS_ACCESS_KEY_ID }}
+        AWS_SECRET_ACCESS_KEY=${{ secrets.AWS_SECRET_ACCESS_KEY }}
+        SENTRY_DSN=${{ secrets.SENTRY_DSN }}
+        ENVIRONMENT=uat
+        DOCKER_IMAGE_TAG=${{ needs.determine-environment.outputs.docker_tag }}
+        
+        # Database configuration for UAT
+        DB_NAME=${{ secrets.DB_NAME }}
+        DB_USER=${{ secrets.DB_USER }}
+        DB_PASSWORD=${{ secrets.DB_PASSWORD }}
+        DB_HOST=db
+        DB_PORT=5432
+        
+        # Security settings
+        ALLOWED_HOSTS=${{ secrets.ALLOWED_HOSTS }}
+        DEBUG=0
+        DJANGO_LOG_LEVEL=WARNING
+        EOF
+
     - name: Deploy to UAT
       run: |
         echo "🚀 Deploying to UAT environment..."
@@ -798,7 +858,37 @@ jobs:
         registry: ${{ env.REGISTRY }}
         username: ${{ github.actor }}
         password: ${{ secrets.GITHUB_TOKEN }}
-    
+
+    - name: Create environment file
+      run: |
+        echo "Creating .env.dev for Development environment"
+        
+        # Create Development environment .env file
+        cat > .env.dev << EOF
+        DJANGO_SETTINGS_MODULE=educore_lms.settings.development
+        SECRET_KEY=${{ secrets.DJANGO_SECRET_KEY }}
+        DATABASE_URL=${{ secrets.DATABASE_URL }}
+        REDIS_URL=${{ secrets.REDIS_URL }}
+        EMAIL_HOST_PASSWORD=${{ secrets.EMAIL_HOST_PASSWORD }}
+        AWS_ACCESS_KEY_ID=${{ secrets.AWS_ACCESS_KEY_ID }}
+        AWS_SECRET_ACCESS_KEY=${{ secrets.AWS_SECRET_ACCESS_KEY }}
+        SENTRY_DSN=${{ secrets.SENTRY_DSN }}
+        ENVIRONMENT=development
+        DOCKER_IMAGE_TAG=${{ needs.determine-environment.outputs.docker_tag }}
+        
+        # Database configuration for Development
+        DB_NAME=${{ secrets.DB_NAME }}
+        DB_USER=${{ secrets.DB_USER }}
+        DB_PASSWORD=${{ secrets.DB_PASSWORD }}
+        DB_HOST=db
+        DB_PORT=5432
+        
+        # Security settings
+        ALLOWED_HOSTS=${{ secrets.ALLOWED_HOSTS }}
+        DEBUG=1
+        DJANGO_LOG_LEVEL=DEBUG
+        EOF
+
     - name: Deploy to Development
       env:
         REGISTRY: ${{ env.REGISTRY }}
