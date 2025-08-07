@@ -461,7 +461,7 @@ jobs:
       uses: actions/github-script@v6
       with:
         script: |
-          const environment = '${{ github.event.inputs.environment || "production" }}';
+          const environment = '${{ github.event.inputs.environment || ''production'' }}';
           const title = `🚨 Backup Failure - ${environment.toUpperCase()} - ${new Date().toISOString().split('T')[0]}`;
           const body = `
           ## Backup Failure Alert
