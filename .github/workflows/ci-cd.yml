@@ -777,7 +777,7 @@ jobs:
     if: needs.determine-environment.outputs.environment == 'development'
     environment:
       name: development
-      url: https://dev.educore-lms.com
+      url: http://localhost:8004
     
     steps:
     - name: Checkout code
