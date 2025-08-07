@@ -817,10 +817,44 @@ jobs:
         docker-compose -f docker-compose.dev.yml exec -T web python manage.py collectstatic --noinput
         
         # Basic health check
-        curl -f https://dev.educore-lms.com/health/ || echo "Development deployment completed with warnings"
+        echo "🔍 Performing health check..."
+         # Wait for services to be ready
+         sleep 10
+         
+         # Check if containers are running
+         docker-compose -f docker-compose.dev.yml ps
+         
+         # Wait for application to be ready
+         for i in {1..30}; do
+           echo "⏳ Waiting for application to be ready... ($i/30)"
+           
+           # Try direct connection to web container using Python
+            if docker-compose -f docker-compose.dev.yml exec -T web python -c "import urllib.request; urllib.request.urlopen('http://localhost:8000/health/')" 2>/dev/null; then
+              echo "✅ Health check passed (direct container access)"
+              break
+            fi
+           
+           # Try through nginx proxy
+           if curl -f http://localhost:8081/health/ 2>/dev/null; then
+             echo "✅ Health check passed (nginx proxy)"
+             break
+           fi
+           
+           if [ $i -eq 30 ]; then
+             echo "❌ Health check failed after 30 attempts"
+             echo "📋 Container status:"
+             docker-compose -f docker-compose.dev.yml ps
+             echo "📋 Web container logs:"
+             docker-compose -f docker-compose.dev.yml logs web
+             echo "📋 Nginx container logs:"
+             docker-compose -f docker-compose.dev.yml logs nginx
+             exit 1
+           fi
+           sleep 10
+         done
         
         echo "✅ Development deployment completed"
-        echo "🔗 URL: https://dev.educore-lms.com"
+        echo "🔗 URL: http://localhost:8004"
     
     - name: Create Release
       if: success()
