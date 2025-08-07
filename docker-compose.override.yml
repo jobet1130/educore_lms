@@ -1,0 +1,18 @@
+version: '3.8'
+
+# Development overrides
+services:
+  web:
+    environment:
+      - DEBUG=1
+      - DJANGO_SETTINGS_MODULE=educore_lms.settings
+    volumes:
+      - .:/app
+    command: python manage.py runserver 0.0.0.0:8000
+    ports:
+      - "8000:8000"
+
+  # Remove nginx in development to access Django directly
+  nginx:
+    profiles:
+      - production

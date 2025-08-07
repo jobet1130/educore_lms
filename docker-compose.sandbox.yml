@@ -1,0 +1,59 @@
+version: '3.8'
+
+# Sandbox Environment - For experimental features and testing
+services:
+  web:
+    container_name: educore_lms_web-sandbox
+    build: .
+    ports:
+      - "8001:8000"
+    env_file:
+      - .env.sandbox
+    environment:
+      - DEBUG=${DEBUG:-1}
+      - SECRET_KEY=${SECRET_KEY}
+      - DATABASE_URL=${DATABASE_URL}
+      - ALLOWED_HOSTS=${ALLOWED_HOSTS}
+      - ENVIRONMENT=${ENVIRONMENT}
+    volumes:
+      - .:/app
+      - sandbox_static:/app/staticfiles
+      - sandbox_media:/app/media
+    depends_on:
+      - db
+    restart: unless-stopped
+    networks:
+      - sandbox_network
+    deploy:
+      resources:
+        limits:
+          memory: 512M
+          cpus: '0.5'
+
+  db:
+    image: postgres:15-alpine
+    environment:
+      - POSTGRES_DB=${DB_NAME:-sandbox_db}
+      - POSTGRES_USER=${DB_USER:-sandbox_user}
+      - POSTGRES_PASSWORD=${DB_PASSWORD}
+    volumes:
+      - sandbox_postgres:/var/lib/postgresql/data
+    ports:
+      - "5433:5432"
+    restart: unless-stopped
+    networks:
+      - sandbox_network
+    deploy:
+      resources:
+        limits:
+          memory: 256M
+          cpus: '0.3'
+
+volumes:
+  sandbox_postgres:
+  sandbox_static:
+  sandbox_media:
+
+networks:
+  sandbox_network:
+    driver: bridge

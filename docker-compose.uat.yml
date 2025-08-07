@@ -1,0 +1,120 @@
+version: '3.8'
+
+# UAT Environment - User Acceptance Testing
+services:
+  web:
+    container_name: educore_lms_web-uat
+    build: .
+    ports:
+      - "8003:8000"
+    env_file:
+      - .env.uat
+    environment:
+      - DEBUG=${DEBUG:-0}
+      - SECRET_KEY=${SECRET_KEY}
+      - DATABASE_URL=${DATABASE_URL}
+      - ALLOWED_HOSTS=${ALLOWED_HOSTS}
+      - ENVIRONMENT=${ENVIRONMENT:-uat}
+      - DJANGO_LOG_LEVEL=${DJANGO_LOG_LEVEL:-WARNING}
+      - SECURE_SSL_REDIRECT=${SECURE_SSL_REDIRECT:-False}
+      - SESSION_COOKIE_SECURE=${SESSION_COOKIE_SECURE:-False}
+      - CSRF_COOKIE_SECURE=${CSRF_COOKIE_SECURE:-False}
+    volumes:
+      - uat_static:/app/staticfiles
+      - uat_media:/app/media
+      - ./logs:/app/logs
+    depends_on:
+      - db
+    restart: unless-stopped
+    networks:
+      - uat_network
+    deploy:
+      resources:
+        limits:
+          memory: 2G
+          cpus: '1.5'
+        reservations:
+          memory: 1G
+          cpus: '0.8'
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health/"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+
+  db:
+    image: postgres:15-alpine
+    environment:
+      - POSTGRES_DB=${DB_NAME:-uat_db}
+      - POSTGRES_USER=${DB_USER:-uat_user}
+      - POSTGRES_PASSWORD=${DB_PASSWORD}
+    volumes:
+      - uat_postgres:/var/lib/postgresql/data
+      - ./backups:/backups
+    ports:
+      - "5435:5432"
+    restart: unless-stopped
+    networks:
+      - uat_network
+    deploy:
+      resources:
+        limits:
+          memory: 1G
+          cpus: '0.8'
+        reservations:
+          memory: 512M
+          cpus: '0.4'
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U uat_user -d uat_db"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  nginx:
+    image: nginx:alpine
+    ports:
+      - "8080:80"
+    volumes:
+      - ./nginx.uat.conf:/etc/nginx/nginx.conf:ro
+      - uat_static:/app/staticfiles:ro
+      - uat_media:/app/media:ro
+      - ./logs/nginx:/var/log/nginx
+    depends_on:
+      - web
+    restart: unless-stopped
+    networks:
+      - uat_network
+    deploy:
+      resources:
+        limits:
+          memory: 256M
+          cpus: '0.3'
+
+  # Monitoring service for UAT
+  monitoring:
+    image: prom/prometheus:latest
+    ports:
+      - "9090:9090"
+    volumes:
+      - ./monitoring/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - prometheus_data:/prometheus
+    networks:
+      - uat_network
+    profiles:
+      - monitoring
+    deploy:
+      resources:
+        limits:
+          memory: 512M
+          cpus: '0.3'
+
+volumes:
+  uat_postgres:
+  uat_static:
+  uat_media:
+  prometheus_data:
+
+networks:
+  uat_network:
+    driver: bridge

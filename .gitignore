@@ -121,6 +121,14 @@ celerybeat.pid
 
 # Environments
 .env
+.env.*
+.env.local
+.env.development
+.env.sandbox
+.env.qa
+.env.uat
+.env.prod
+.env.production
 .venv
 env/
 venv/
@@ -190,3 +198,9 @@ node_modules/
 npm-debug.log*
 yarn-debug.log*
 yarn-error.log*
+
+# PowerShell scripts
+*.ps1
+
+# Deployment scripts
+deploy.sh

@@ -1,0 +1,173 @@
+version: '3.8'
+
+# Production Environment - High availability and security
+services:
+  web:
+    build: .
+    container_name: educore_lms_web-prod
+    ports:
+      - "8005:8000"
+    env_file:
+      - .env.prod
+    environment:
+      - DEBUG=0
+      - SECRET_KEY=${SECRET_KEY}
+      - DATABASE_URL=postgres://${DB_USER}:${DB_PASSWORD}@db:5432/${DB_NAME}
+
+      - ALLOWED_HOSTS=${ALLOWED_HOSTS}
+      - ENVIRONMENT=production
+      - DJANGO_LOG_LEVEL=ERROR
+      - SECURE_SSL_REDIRECT=True
+      - SESSION_COOKIE_SECURE=True
+      - CSRF_COOKIE_SECURE=True
+      - SECURE_BROWSER_XSS_FILTER=True
+      - SECURE_CONTENT_TYPE_NOSNIFF=True
+      - SECURE_HSTS_SECONDS=31536000
+      - SECURE_HSTS_INCLUDE_SUBDOMAINS=True
+      - SECURE_HSTS_PRELOAD=True
+    volumes:
+      - prod_static:/app/staticfiles
+      - prod_media:/app/media
+      - ./logs:/app/logs
+    depends_on:
+      - db
+    restart: unless-stopped
+    networks:
+      - prod_network
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health/"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  db:
+    image: postgres:15-alpine
+    environment:
+      - POSTGRES_DB=${DB_NAME}
+      - POSTGRES_USER=${DB_USER}
+      - POSTGRES_PASSWORD=${DB_PASSWORD}
+    volumes:
+      - prod_postgres:/var/lib/postgresql/data
+      - ./backups:/backups
+      - ./postgresql.conf:/etc/postgresql/postgresql.conf:ro
+    restart: unless-stopped
+    networks:
+      - prod_network
+    deploy:
+      resources:
+        limits:
+          memory: 4G
+          cpus: '2.0'
+        reservations:
+          memory: 2G
+          cpus: '1.0'
+      restart_policy:
+        condition: on-failure
+        delay: 5s
+        max_attempts: 3
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${DB_USER} -d ${DB_NAME}"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  nginx:
+    image: nginx:alpine
+    ports:
+      - "8090:80"
+      - "8443:443"
+    volumes:
+      - ./nginx.prod.conf:/etc/nginx/nginx.conf:ro
+      - ./ssl:/etc/nginx/ssl:ro
+      - prod_static:/app/staticfiles:ro
+      - prod_media:/app/media:ro
+      - ./logs/nginx:/var/log/nginx
+    depends_on:
+      - web
+    restart: unless-stopped
+    networks:
+      - prod_network
+    deploy:
+      resources:
+        limits:
+          memory: 512M
+          cpus: '0.5'
+        reservations:
+          memory: 256M
+          cpus: '0.25'
+      restart_policy:
+        condition: on-failure
+        delay: 5s
+        max_attempts: 3
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  # Load balancer for high availability
+  haproxy:
+    image: haproxy:alpine
+    ports:
+      - "8005:8000"
+    volumes:
+      - ./haproxy.cfg:/usr/local/etc/haproxy/haproxy.cfg:ro
+    depends_on:
+      - nginx
+    restart: unless-stopped
+    networks:
+      - prod_network
+    profiles:
+      - ha
+    deploy:
+      resources:
+        limits:
+          memory: 256M
+          cpus: '0.3'
+
+  # Backup service
+  backup:
+    image: postgres:15-alpine
+    environment:
+      - PGPASSWORD=${DB_PASSWORD}
+    volumes:
+      - ./backups:/backups
+      - ./backup-scripts:/scripts:ro
+    networks:
+      - prod_network
+    profiles:
+      - backup
+    command: >
+      sh -c "while true; do
+        pg_dump -h db -U ${DB_USER} -d ${DB_NAME} > /backups/backup_$$(date +%Y%m%d_%H%M%S).sql
+        find /backups -name '*.sql' -mtime +7 -delete
+        sleep 86400
+      done"
+
+volumes:
+  prod_postgres:
+  prod_static:
+  prod_media:
+
+networks:
+  prod_network:
+    driver: bridge
+
+secrets:
+  db_password:
+    external: true
+  redis_password:
+    external: true
+  secret_key:
+    external: true
