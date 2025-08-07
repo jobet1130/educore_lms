@@ -251,8 +251,8 @@ jobs:
         # Skip pulling images - use local images
         echo "Using local images (skipping pull to avoid registry access issues)"
         
-        # Start services
-        docker-compose -f $COMPOSE_FILE -p $PROJECT_NAME up -d
+        # Start services with --no-deps to avoid pulling from registry
+        docker-compose -f $COMPOSE_FILE -p $PROJECT_NAME up -d --no-deps
         
         # Wait for services to be healthy
         echo "Waiting for services to be healthy..."
