@@ -611,7 +611,7 @@ jobs:
         curl -f https://educore-lms.com/health/ || echo "Production health check failed"
         
         # Validate Docker image exists
-        docker pull educore-lms:${{ needs.determine-environment.outputs.docker_tag }}
+        docker pull ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ needs.determine-environment.outputs.docker_tag }}
     
     - name: Blue-Green Deployment Setup
       run: |

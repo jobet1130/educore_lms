@@ -14,8 +14,7 @@ on:
   workflow_dispatch:
 
 env:
-  AWS_REGION: us-east-1
-  BACKUP_BUCKET: educore-backups
+  BACKUP_RETENTION_DAYS: 30
   REGISTRY: ghcr.io
   IMAGE_NAME: ${{ github.repository }}
 
@@ -30,12 +29,10 @@ jobs:
     - name: Checkout code
       uses: actions/checkout@v4
     
-    - name: Configure AWS credentials
-      uses: aws-actions/configure-aws-credentials@v4
-      with:
-        aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
-        aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
-        aws-region: ${{ env.AWS_REGION }}
+    - name: Setup backup directory
+      run: |
+        mkdir -p backups/database
+        echo "Backup directory created"
     
     - name: Set backup variables
       run: |
@@ -107,28 +104,31 @@ jobs:
           exit 1
         fi
     
-    - name: Upload backup to S3
+    - name: Store backup locally
       run: |
-        echo "Uploading backup to S3: s3://$BACKUP_BUCKET/$BACKUP_PREFIX/$BACKUP_FILE"
+        echo "Storing backup locally: backups/database/$BACKUP_FILE"
         
-        aws s3 cp "$BACKUP_FILE" "s3://$BACKUP_BUCKET/$BACKUP_PREFIX/$BACKUP_FILE" \
-            --storage-class STANDARD_IA \
-            --metadata "environment=$ENVIRONMENT,backup-type=$BACKUP_TYPE,timestamp=$TIMESTAMP"
+        mv "$BACKUP_FILE" "backups/database/$BACKUP_FILE"
         
-        # Verify upload
-        aws s3 ls "s3://$BACKUP_BUCKET/$BACKUP_PREFIX/$BACKUP_FILE"
-        
-        echo "✅ Database backup uploaded to S3"
+        # Verify backup file
+        if [ -f "backups/database/$BACKUP_FILE" ] && [ -s "backups/database/$BACKUP_FILE" ]; then
+          echo "✅ Database backup stored locally"
+          ls -lh "backups/database/$BACKUP_FILE"
+        else
+          echo "❌ Failed to store database backup"
+          exit 1
+        fi
     
     - name: Create backup metadata
       run: |
-        cat > backup-metadata.json << EOF
+        mkdir -p backups/metadata
+        cat > backups/metadata/$TIMESTAMP.json << EOF
         {
           "backup_type": "database",
           "environment": "$ENVIRONMENT",
           "timestamp": "$TIMESTAMP",
           "file_name": "$BACKUP_FILE",
-          "s3_path": "s3://$BACKUP_BUCKET/$BACKUP_PREFIX/$BACKUP_FILE",
+          "local_path": "backups/database/$BACKUP_FILE",
           "backup_method": "$BACKUP_TYPE",
           "created_by": "github-actions",
           "workflow_run": "${{ github.run_id }}",
@@ -136,29 +136,30 @@ jobs:
         }
         EOF
         
-        # Upload metadata
-        aws s3 cp backup-metadata.json "s3://$BACKUP_BUCKET/$BACKUP_PREFIX/metadata/$TIMESTAMP.json"
+        echo "✅ Backup metadata created"
     
     - name: Clean up old backups
       run: |
-        echo "Cleaning up old backups (keeping last 30 days)"
+        echo "Cleaning up old backups (keeping last $BACKUP_RETENTION_DAYS days)"
         
-        # List and delete backups older than 30 days
-        CUTOFF_DATE=$(date -d '30 days ago' +%Y%m%d)
+        # Find and delete backups older than retention period
+        find backups/database -name "*.sql.gz" -type f -mtime +$BACKUP_RETENTION_DAYS -delete 2>/dev/null || true
+        find backups/metadata -name "*.json" -type f -mtime +$BACKUP_RETENTION_DAYS -delete 2>/dev/null || true
         
-        aws s3 ls "s3://$BACKUP_BUCKET/$BACKUP_PREFIX/" --recursive | \
-        while read -r line; do
-          BACKUP_DATE=$(echo "$line" | awk '{print $4}' | grep -o '[0-9]\{8\}' | head -1)
-          if [ "$BACKUP_DATE" -lt "$CUTOFF_DATE" ]; then
-            FILE_PATH=$(echo "$line" | awk '{print $4}')
-            echo "Deleting old backup: $FILE_PATH"
-            aws s3 rm "s3://$BACKUP_BUCKET/$FILE_PATH"
-          fi
-        done
+        echo "✅ Old backups cleaned up"
+    
+    - name: Upload backup artifacts
+      uses: actions/upload-artifact@v4
+      with:
+        name: database-backup-${{ env.TIMESTAMP }}
+        path: |
+          backups/database/${{ env.BACKUP_FILE }}
+          backups/metadata/${{ env.TIMESTAMP }}.json
+        retention-days: ${{ env.BACKUP_RETENTION_DAYS }}
     
     outputs:
       backup_file: ${{ env.BACKUP_FILE }}
-      s3_path: s3://${{ env.BACKUP_BUCKET }}/${{ env.BACKUP_PREFIX }}/${{ env.BACKUP_FILE }}
+      local_path: backups/database/${{ env.BACKUP_FILE }}
 
   # Media files backup
   media-backup:
@@ -170,12 +171,10 @@ jobs:
     - name: Checkout code
       uses: actions/checkout@v4
     
-    - name: Configure AWS credentials
-      uses: aws-actions/configure-aws-credentials@v4
-      with:
-        aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
-        aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
-        aws-region: ${{ env.AWS_REGION }}
+    - name: Setup media backup directory
+      run: |
+        mkdir -p backups/media
+        echo "Media backup directory created"
     
     - name: Set backup variables
       run: |
@@ -186,40 +185,65 @@ jobs:
         echo "TIMESTAMP=$TIMESTAMP" >> $GITHUB_ENV
         echo "MEDIA_BACKUP_PREFIX=educore-$ENVIRONMENT-media" >> $GITHUB_ENV
     
-    - name: Sync media files to backup bucket
+    - name: Backup media files locally
       run: |
-        # Set source bucket based on environment
+        # Set source directory based on environment
         case "$ENVIRONMENT" in
           "production")
-            SOURCE_BUCKET="${{ secrets.PROD_MEDIA_BUCKET }}"
+            SOURCE_DIR="/var/www/educore/media"
             ;;
           "uat")
-            SOURCE_BUCKET="${{ secrets.UAT_MEDIA_BUCKET }}"
+            SOURCE_DIR="/var/www/educore-uat/media"
             ;;
           "qa")
-            SOURCE_BUCKET="${{ secrets.QA_MEDIA_BUCKET }}"
+            SOURCE_DIR="/var/www/educore-qa/media"
+            ;;
+          *)
+            SOURCE_DIR="./static/media"
             ;;
         esac
         
-        echo "Backing up media files from $SOURCE_BUCKET to $BACKUP_BUCKET"
+        echo "Backing up media files from $SOURCE_DIR"
         
-        # Sync media files
-        aws s3 sync "s3://$SOURCE_BUCKET/" "s3://$BACKUP_BUCKET/$MEDIA_BACKUP_PREFIX/$TIMESTAMP/" \
-            --storage-class STANDARD_IA \
-            --exclude "*.tmp" \
-            --exclude "cache/*"
+        # Create media backup archive
+        MEDIA_BACKUP_FILE="educore-$ENVIRONMENT-media-$TIMESTAMP.tar.gz"
         
-        echo "✅ Media files backup completed"
+        if [ -d "$SOURCE_DIR" ]; then
+          tar -czf "backups/media/$MEDIA_BACKUP_FILE" \
+              -C "$(dirname $SOURCE_DIR)" \
+              "$(basename $SOURCE_DIR)" \
+              --exclude="*.tmp" \
+              --exclude="cache/*" \
+              --exclude="__pycache__/*"
+          
+          echo "✅ Media files backup completed: $MEDIA_BACKUP_FILE"
+        else
+          echo "⚠️ Media directory not found: $SOURCE_DIR (creating empty backup)"
+          touch "backups/media/$MEDIA_BACKUP_FILE"
+        fi
+        
+        echo "MEDIA_BACKUP_FILE=$MEDIA_BACKUP_FILE" >> $GITHUB_ENV
     
     - name: Create media backup manifest
       run: |
         # Create manifest of backed up files
-        aws s3 ls "s3://$BACKUP_BUCKET/$MEDIA_BACKUP_PREFIX/$TIMESTAMP/" --recursive > media-manifest.txt
+        mkdir -p backups/manifests
         
-        # Upload manifest
-        aws s3 cp media-manifest.txt "s3://$BACKUP_BUCKET/$MEDIA_BACKUP_PREFIX/manifests/$TIMESTAMP.txt"
-        
-        echo "✅ Media backup manifest created"
+        if [ -f "backups/media/$MEDIA_BACKUP_FILE" ]; then
+          tar -tzf "backups/media/$MEDIA_BACKUP_FILE" > "backups/manifests/media-$TIMESTAMP.txt"
+          echo "✅ Media backup manifest created"
+        else
+          echo "⚠️ Media backup file not found"
+        fi
+    
+    - name: Upload media backup artifacts
+      uses: actions/upload-artifact@v4
+      with:
+        name: media-backup-${{ env.TIMESTAMP }}
+        path: |
+          backups/media/${{ env.MEDIA_BACKUP_FILE }}
+          backups/manifests/media-${{ env.TIMESTAMP }}.txt
+        retention-days: ${{ env.BACKUP_RETENTION_DAYS }}
 
   # Configuration backup
   config-backup:
@@ -230,12 +254,10 @@ jobs:
     - name: Checkout code
       uses: actions/checkout@v4
     
-    - name: Configure AWS credentials
-      uses: aws-actions/configure-aws-credentials@v4
-      with:
-        aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
-        aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
-        aws-region: ${{ env.AWS_REGION }}
+    - name: Setup config backup directory
+      run: |
+        mkdir -p backups/config
+        echo "Configuration backup directory created"
     
     - name: Create configuration backup
       run: |
@@ -246,7 +268,7 @@ jobs:
         echo "Creating configuration backup for $ENVIRONMENT"
         
         # Create backup of configuration files
-        tar -czf "$CONFIG_BACKUP_FILE" \
+        tar -czf "backups/config/$CONFIG_BACKUP_FILE" \
             docker-compose*.yml \
             nginx*.conf \
             .env.example \
@@ -255,10 +277,15 @@ jobs:
             .github/ \
             --exclude='.github/workflows/backup-recovery.yml'
         
-        # Upload to S3
-        aws s3 cp "$CONFIG_BACKUP_FILE" "s3://$BACKUP_BUCKET/educore-$ENVIRONMENT-config/$CONFIG_BACKUP_FILE"
-        
-        echo "✅ Configuration backup completed"
+        echo "CONFIG_BACKUP_FILE=$CONFIG_BACKUP_FILE" >> $GITHUB_ENV
+        echo "✅ Configuration backup completed: $CONFIG_BACKUP_FILE"
+    
+    - name: Upload config backup artifacts
+      uses: actions/upload-artifact@v4
+      with:
+        name: config-backup-${{ env.TIMESTAMP }}
+        path: backups/config/${{ env.CONFIG_BACKUP_FILE }}
+        retention-days: ${{ env.BACKUP_RETENTION_DAYS }}
 
   # Backup verification and testing
   backup-verification:
@@ -285,41 +312,40 @@ jobs:
     - name: Checkout code
       uses: actions/checkout@v4
     
-    - name: Configure AWS credentials
-      uses: aws-actions/configure-aws-credentials@v4
+    - name: Download backup artifacts
+      uses: actions/download-artifact@v4
       with:
-        aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
-        aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
-        aws-region: ${{ env.AWS_REGION }}
+        pattern: database-backup-*
+        path: ./backups/
     
     - name: Install PostgreSQL client
       run: |
         sudo apt-get update
         sudo apt-get install -y postgresql-client-15
     
-    - name: Download and test backup
+    - name: Test backup restore
       run: |
         BACKUP_FILE="${{ needs.database-backup.outputs.backup_file }}"
-        S3_PATH="${{ needs.database-backup.outputs.s3_path }}"
         
         echo "Testing backup restore: $BACKUP_FILE"
         
-        # Download backup from S3
-        aws s3 cp "$S3_PATH" "$BACKUP_FILE"
+        # Find the downloaded backup file
+        BACKUP_PATH=$(find ./backups -name "$BACKUP_FILE" -type f | head -1)
         
-        # Verify backup file
-        if [ ! -f "$BACKUP_FILE" ] || [ ! -s "$BACKUP_FILE" ]; then
-          echo "❌ Backup file not found or empty"
+        if [ -z "$BACKUP_PATH" ] || [ ! -f "$BACKUP_PATH" ] || [ ! -s "$BACKUP_PATH" ]; then
+          echo "❌ Backup file not found or empty: $BACKUP_FILE"
+          echo "Available files:"
+          find ./backups -type f -ls
           exit 1
         fi
         
-        echo "✅ Backup file downloaded successfully"
+        echo "✅ Backup file found: $BACKUP_PATH"
         
         # Test restore (to test database)
         export PGPASSWORD=postgres
         
         # Decompress and restore
-        gunzip -c "$BACKUP_FILE" | pg_restore -h localhost -U postgres -d backup_test --verbose
+        gunzip -c "$BACKUP_PATH" | pg_restore -h localhost -U postgres -d backup_test --verbose
         
         # Verify restore
         TABLES=$(psql -h localhost -U postgres -d backup_test -t -c "SELECT count(*) FROM information_schema.tables WHERE table_schema='public';")
@@ -365,15 +391,17 @@ jobs:
         ## Recovery Procedures
         
         ### Database Recovery
-        1. Download backup from S3: \`${{ needs.database-backup.outputs.s3_path }}\`
-        2. Restore using: \`pg_restore -h <host> -U <user> -d <database> <backup_file>\`
+        1. Download backup artifact from GitHub Actions: \`database-backup-<timestamp>\`
+        2. Extract backup file: \`${{ needs.database-backup.outputs.backup_file }}\`
+        3. Restore using: \`gunzip -c <backup_file> | pg_restore -h <host> -U <user> -d <database>\`
         
         ### Media Files Recovery
-        1. Sync from backup: \`aws s3 sync s3://$BACKUP_BUCKET/educore-production-media/<timestamp>/ s3://<target-bucket>/\`
+        1. Download media backup artifact from GitHub Actions: \`media-backup-<timestamp>\`
+        2. Extract media archive: \`tar -xzf <media_backup_file> -C <target_directory>\`
         
         ### Configuration Recovery
-        1. Download config backup from S3
-        2. Extract and deploy configuration files
+        1. Download config backup artifact from GitHub Actions: \`config-backup-<timestamp>\`
+        2. Extract configuration files: \`tar -xzf <config_backup_file>\`
         3. Update environment variables
         4. Restart services
         

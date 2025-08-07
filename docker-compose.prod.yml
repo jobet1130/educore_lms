@@ -3,7 +3,7 @@ version: '3.8'
 # Production Environment - High availability and security
 services:
   web:
-    build: .
+    image: ghcr.io/${GITHUB_REPOSITORY:-educore/educore_lms}:${DOCKER_TAG:-latest}
     container_name: educore_lms_web-prod
     ports:
       - "8005:8000"
