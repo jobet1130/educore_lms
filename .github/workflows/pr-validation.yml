@@ -1,5 +1,11 @@
 name: Pull Request Validation
 
+permissions:
+  contents: read
+  actions: read
+  pull-requests: write
+  security-events: write
+
 on:
   pull_request:
     branches:

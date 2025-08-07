@@ -1,5 +1,10 @@
 name: Performance Testing
 
+permissions:
+  contents: read
+  actions: read
+  security-events: write
+
 on:
   schedule:
     # Run performance tests weekly on Sunday at 3 AM UTC
