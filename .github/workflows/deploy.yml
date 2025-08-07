@@ -248,7 +248,10 @@ jobs:
         # Stop existing containers
         docker-compose -f $COMPOSE_FILE -p $PROJECT_NAME down || true
         
-        # Skip pulling images - use local images
+        # Build the web image locally to avoid registry access issues
+        echo "Building web image locally..."
+        docker build -t educore-prod-web:latest .
+        
         echo "Using local images (skipping pull to avoid registry access issues)"
         
         # Start services with --no-deps to avoid pulling from registry

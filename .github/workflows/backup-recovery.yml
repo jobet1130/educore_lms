@@ -12,16 +12,6 @@ on:
     # Weekly full backup on Sunday at 2 AM UTC
     - cron: '0 2 * * 0'
   workflow_dispatch:
-    inputs:
-      environment:
-        description: 'Environment to backup'
-        required: false
-        default: 'production'
-        type: choice
-        options:
-          - production
-          - uat
-          - qa
 
 env:
   BACKUP_RETENTION_DAYS: 30
@@ -46,7 +36,7 @@ jobs:
     
     - name: Set backup variables
       run: |
-        ENVIRONMENT="${{ github.event.inputs.environment || 'production' }}"
+        ENVIRONMENT="production"
         BACKUP_TYPE="incremental"
         TIMESTAMP=$(date +"%Y%m%d_%H%M%S")
         
@@ -188,7 +178,7 @@ jobs:
     
     - name: Set backup variables
       run: |
-        ENVIRONMENT="${{ github.event.inputs.environment || 'production' }}"
+        ENVIRONMENT="production"
         TIMESTAMP=$(date +"%Y%m%d_%H%M%S")
         
         echo "ENVIRONMENT=$ENVIRONMENT" >> $GITHUB_ENV
@@ -271,7 +261,7 @@ jobs:
     
     - name: Create configuration backup
       run: |
-        ENVIRONMENT="${{ github.event.inputs.environment || 'production' }}"
+        ENVIRONMENT="production"
         TIMESTAMP=$(date +"%Y%m%d_%H%M%S")
         CONFIG_BACKUP_FILE="educore-$ENVIRONMENT-config-$TIMESTAMP.tar.gz"
         
@@ -380,7 +370,7 @@ jobs:
     
     - name: Generate disaster recovery report
       run: |
-        ENVIRONMENT="${{ github.event.inputs.environment || 'production' }}"
+        ENVIRONMENT="production"
         TIMESTAMP=$(date +"%Y-%m-%d %H:%M:%S UTC")
         
         cat > disaster-recovery-report.md << EOF
@@ -479,7 +469,7 @@ jobs:
       uses: actions/github-script@v6
       with:
         script: |
-          const environment = '${{ github.event.inputs.environment || "production" }}';
+          const environment = process.env.ENVIRONMENT || 'production';
           const title = `🚨 Backup Failure - ${environment.toUpperCase()} - ${new Date().toISOString().split('T')[0]}`;
           const body = `
           ## Backup Failure Alert
@@ -513,7 +503,7 @@ jobs:
     - name: Send success notification
       if: env.OVERALL_STATUS == 'success'
       run: |
-        ENVIRONMENT="${{ github.event.inputs.environment || 'production' }}"
+        ENVIRONMENT="production"
         echo "✅ Backup completed successfully for $ENVIRONMENT environment"
         echo "📊 All backup components completed without errors"
         echo "🔒 Data protection and disaster recovery capabilities maintained"
