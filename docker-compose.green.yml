@@ -3,7 +3,7 @@ version: '3.8'
 # Green Environment - For blue-green deployment
 services:
   web:
-    image: ghcr.io/${GITHUB_REPOSITORY:-educore/educore_lms}:${DOCKER_TAG:-latest}
+    image: educore-prod-web:latest
     container_name: educore_lms_web-green
     ports:
       - "8006:8000"  # Different port from production (8005)
