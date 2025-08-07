@@ -369,7 +369,7 @@ jobs:
         
         # Wait for application to be ready
         for i in {1..30}; do
-          if curl -f -s "$DEPLOY_URL/health/" > /dev/null; then
+          if curl.exe -f -s "$DEPLOY_URL/health/" > /dev/null; then
             echo "Health check passed"
             break
           else
@@ -379,7 +379,7 @@ jobs:
         done
         
         # Final health check
-        curl -f "$DEPLOY_URL/health/" || (echo "Health check failed" && exit 1)
+        curl.exe -f "$DEPLOY_URL/health/" || (echo "Health check failed" && exit 1)
 
   # Post-deployment tasks
   post-deployment:
