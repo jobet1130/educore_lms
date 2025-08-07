@@ -231,31 +231,34 @@ jobs:
     - name: Determine environment and docker tag
       id: env
       run: |
-        if [[ "$BRANCH_NAME" == "main" || "$BRANCH_NAME" == "release" ]]; then
-          echo "environment=production" >> $GITHUB_OUTPUT
+        # Sequential deployment flow: Development -> QA -> UAT -> Production
+        if [[ "$BRANCH_NAME" == "release" ]]; then
+          echo "environment=development" >> $GITHUB_OUTPUT
           echo "docker_tag=latest" >> $GITHUB_OUTPUT
+        elif [[ "$BRANCH_NAME" == "main" ]]; then
+          echo "environment=development" >> $GITHUB_OUTPUT
+          echo "docker_tag=main" >> $GITHUB_OUTPUT
         elif [[ "$BRANCH_NAME" == "staging" || "$BRANCH_NAME" == "releaseTest" ]]; then
-          echo "environment=uat" >> $GITHUB_OUTPUT
+          echo "environment=development" >> $GITHUB_OUTPUT
           echo "docker_tag=uat" >> $GITHUB_OUTPUT
         elif [[ "$BRANCH_NAME" == "stagingTest" ]]; then
-          echo "environment=qa" >> $GITHUB_OUTPUT
+          echo "environment=development" >> $GITHUB_OUTPUT
           echo "docker_tag=qa" >> $GITHUB_OUTPUT
         elif [[ "$BRANCH_NAME" == "qa" ]]; then
-          echo "environment=sandbox" >> $GITHUB_OUTPUT
+          echo "environment=development" >> $GITHUB_OUTPUT
           echo "docker_tag=sandbox" >> $GITHUB_OUTPUT
         elif [[ "$BRANCH_NAME" == feature/* ]]; then
-          echo "environment=qa" >> $GITHUB_OUTPUT
+          echo "environment=development" >> $GITHUB_OUTPUT
           echo "docker_tag=feature-$(echo $BRANCH_NAME | sed 's/feature\///')" >> $GITHUB_OUTPUT
         elif [[ "$BRANCH_NAME" == hotfix/* ]]; then
-          echo "environment=production" >> $GITHUB_OUTPUT
+          echo "environment=development" >> $GITHUB_OUTPUT
           echo "docker_tag=hotfix-$(echo $BRANCH_NAME | sed 's/hotfix\///')" >> $GITHUB_OUTPUT
         elif [[ "$BRANCH_NAME" == enhancement/* ]]; then
-          echo "environment=qa" >> $GITHUB_OUTPUT
+          echo "environment=development" >> $GITHUB_OUTPUT
           echo "docker_tag=enhancement-$(echo $BRANCH_NAME | sed 's/enhancement\///')" >> $GITHUB_OUTPUT
         elif [[ "$BRANCH_NAME" == bugfix/* ]]; then
-          echo "environment=qa" >> $GITHUB_OUTPUT
+          echo "environment=development" >> $GITHUB_OUTPUT
           echo "docker_tag=bugfix-$(echo $BRANCH_NAME | sed 's/bugfix\///')" >> $GITHUB_OUTPUT
-
         else
           echo "environment=development" >> $GITHUB_OUTPUT
           echo "docker_tag=dev" >> $GITHUB_OUTPUT
@@ -263,12 +266,12 @@ jobs:
       env:
         BRANCH_NAME: ${{ github.ref_name }}
 
-  # Deploy to Sandbox (qa branch only)
+  # Deploy to Sandbox (disabled - not part of sequential flow)
   deploy-sandbox:
     name: Deploy to Sandbox
     runs-on: ubuntu-latest
     needs: [build, determine-environment]
-    if: needs.determine-environment.outputs.environment == 'sandbox'
+    if: false  # Disabled: not part of Development -> QA -> UAT -> Production flow
     environment:
       name: sandbox
       url: http://sandbox.educore-lms.com
@@ -342,12 +345,12 @@ jobs:
           echo "❌ Sandbox deployment failed"
         fi
 
-  # Deploy to QA (stagingTest branch, feature/* branches, enhancement/* branches, and bugfix/* branches)
+  # Deploy to QA (after successful development deployment)
   deploy-qa:
     name: Deploy to QA
     runs-on: ubuntu-latest
-    needs: [build, determine-environment]
-    if: needs.determine-environment.outputs.environment == 'qa'
+    needs: [build, determine-environment, deploy-development]
+    if: needs.deploy-development.result == 'success'
     environment:
       name: qa
       url: http://qa.educore-lms.com
@@ -426,12 +429,12 @@ jobs:
           echo "❌ QA deployment failed"
         fi
 
-  # Deploy to UAT (staging and releaseTest branches)
+  # Deploy to UAT (after successful QA deployment)
   deploy-uat:
     name: Deploy to UAT
     runs-on: ubuntu-latest
-    needs: build
-    if: (github.ref == 'refs/heads/staging' || github.ref == 'refs/heads/releaseTest') && github.event_name == 'push'
+    needs: [build, determine-environment, deploy-qa]
+    if: needs.deploy-qa.result == 'success'
     environment:
       name: uat
       url: http://uat.educore-lms.com
@@ -534,11 +537,12 @@ jobs:
         fi
 
   # Deploy to Production (manual approval required)
+  # Deploy to Production (after successful UAT deployment)
   deploy-production:
     name: Deploy to Production
     runs-on: ubuntu-latest
-    needs: [build, determine-environment]
-    if: needs.determine-environment.outputs.environment == 'production'
+    needs: [build, determine-environment, deploy-uat]
+    if: needs.deploy-uat.result == 'success'
     environment:
       name: production
       url: https://educore-lms.com
