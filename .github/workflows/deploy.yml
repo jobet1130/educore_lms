@@ -231,7 +231,17 @@ jobs:
     - name: Deploy with Docker Compose
       run: |
         ENV="${{ needs.determine-environment.outputs.environment }}"
-        COMPOSE_FILE="docker-compose.$ENV.yml"
+        
+        # Map environment names to compose file names
+        case "$ENV" in
+          "production")
+            COMPOSE_FILE="docker-compose.prod.yml"
+            ;;
+          *)
+            COMPOSE_FILE="docker-compose.$ENV.yml"
+            ;;
+        esac
+        
         PROJECT_NAME="educore-$ENV"
         
         echo "Deploying to $ENV environment using $COMPOSE_FILE"
@@ -255,18 +265,40 @@ jobs:
     - name: Run database migrations
       run: |
         ENV="${{ needs.determine-environment.outputs.environment }}"
+        
+        # Map environment names to compose file names
+        case "$ENV" in
+          "production")
+            COMPOSE_FILE="docker-compose.prod.yml"
+            ;;
+          *)
+            COMPOSE_FILE="docker-compose.$ENV.yml"
+            ;;
+        esac
+        
         PROJECT_NAME="educore-$ENV"
         
-        echo "Running database migrations for $ENV"
-        docker-compose -f docker-compose.$ENV.yml -p $PROJECT_NAME exec -T web python manage.py migrate --noinput
+        echo "Running database migrations for $ENV environment"
+        docker-compose -f $COMPOSE_FILE -p $PROJECT_NAME exec -T web python manage.py migrate --noinput
     
     - name: Collect static files
       run: |
         ENV="${{ needs.determine-environment.outputs.environment }}"
+        
+        # Map environment names to compose file names
+        case "$ENV" in
+          "production")
+            COMPOSE_FILE="docker-compose.prod.yml"
+            ;;
+          *)
+            COMPOSE_FILE="docker-compose.$ENV.yml"
+            ;;
+        esac
+        
         PROJECT_NAME="educore-$ENV"
         
-        echo "Collecting static files for $ENV"
-        docker-compose -f docker-compose.$ENV.yml -p $PROJECT_NAME exec -T web python manage.py collectstatic --noinput
+        echo "Collecting static files for $ENV environment"
+        docker-compose -f $COMPOSE_FILE -p $PROJECT_NAME exec -T web python manage.py collectstatic --noinput
     
     - name: Health check
       run: |
@@ -346,13 +378,24 @@ jobs:
     - name: Rollback to previous version
       run: |
         ENV="${{ needs.determine-environment.outputs.environment }}"
+        
+        # Map environment names to compose file names
+        case "$ENV" in
+          "production")
+            COMPOSE_FILE="docker-compose.prod.yml"
+            ;;
+          *)
+            COMPOSE_FILE="docker-compose.$ENV.yml"
+            ;;
+        esac
+        
         PROJECT_NAME="educore-$ENV"
         
         echo "🔄 Rolling back $ENV deployment"
         
         # This would typically involve deploying the previous known good version
         # For now, we'll restart the current services
-        docker-compose -f docker-compose.$ENV.yml -p $PROJECT_NAME restart
+        docker-compose -f $COMPOSE_FILE -p $PROJECT_NAME restart
     
     - name: Notify rollback
       run: |
