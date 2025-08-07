@@ -191,7 +191,7 @@ jobs:
                --csv=load_test_results --headless
     
     - name: Upload load test results
-      uses: actions/upload-artifact@v3
+      uses: actions/upload-artifact@v4
       if: always()
       with:
         name: load-test-results-${{ github.run_number }}
@@ -326,7 +326,7 @@ jobs:
         DJANGO_SETTINGS_MODULE: educore_lms.settings.testing
     
     - name: Upload database performance results
-      uses: actions/upload-artifact@v3
+      uses: actions/upload-artifact@v4
       if: always()
       with:
         name: db-performance-results-${{ github.run_number }}
@@ -411,7 +411,7 @@ jobs:
         lhci autorun
     
     - name: Upload Lighthouse results
-      uses: actions/upload-artifact@v3
+      uses: actions/upload-artifact@v4
       if: always()
       with:
         name: lighthouse-results-${{ github.run_number }}
@@ -427,7 +427,7 @@ jobs:
     
     steps:
     - name: Download all performance artifacts
-      uses: actions/download-artifact@v3
+      uses: actions/download-artifact@v4
     
     - name: Analyze performance results
       run: |
@@ -527,7 +527,7 @@ jobs:
           });
     
     - name: Upload performance summary
-      uses: actions/upload-artifact@v3
+      uses: actions/upload-artifact@v4
       with:
         name: performance-summary-${{ github.run_number }}
         path: performance-summary.md

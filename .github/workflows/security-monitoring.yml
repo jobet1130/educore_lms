@@ -50,7 +50,7 @@ jobs:
         semgrep --config=auto .
     
     - name: Upload security reports
-      uses: actions/upload-artifact@v3
+      uses: actions/upload-artifact@v4
       if: always()
       with:
         name: security-reports-${{ github.run_number }}
@@ -88,7 +88,7 @@ jobs:
         output: 'trivy-results.sarif'
     
     - name: Upload Trivy scan results to GitHub Security tab
-      uses: github/codeql-action/upload-sarif@v2
+      uses: github/codeql-action/upload-sarif@v3
       if: always()
       with:
         sarif_file: 'trivy-results.sarif'
@@ -127,7 +127,7 @@ jobs:
         pip-licenses --format=table
     
     - name: Upload license report
-      uses: actions/upload-artifact@v3
+      uses: actions/upload-artifact@v4
       with:
         name: license-report-${{ github.run_number }}
         path: licenses.json
@@ -170,7 +170,7 @@ jobs:
         output_file_path: checkov-results.sarif
     
     - name: Upload Checkov scan results
-      uses: github/codeql-action/upload-sarif@v2
+      uses: github/codeql-action/upload-sarif@v3
       if: always()
       with:
         sarif_file: checkov-results.sarif
@@ -226,7 +226,7 @@ jobs:
     
     steps:
     - name: Download all artifacts
-      uses: actions/download-artifact@v3
+      uses: actions/download-artifact@v4
     
     - name: Generate security summary
       run: |
@@ -243,7 +243,7 @@ jobs:
         echo "Security reports are available in the workflow artifacts." >> security-summary.md
     
     - name: Upload security summary
-      uses: actions/upload-artifact@v3
+      uses: actions/upload-artifact@v4
       with:
         name: security-summary-${{ github.run_number }}
         path: security-summary.md

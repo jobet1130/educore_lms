@@ -20,12 +20,17 @@ from django.urls import path
 from django.http import HttpResponse
 from django.views.decorators.csrf import csrf_exempt
 
+
 def home_view(request):
-    return HttpResponse("<h1>EduCore LMS</h1><p>Learning Management System is running successfully!</p>")
+    return HttpResponse(
+        "<h1>EduCore LMS</h1><p>Learning Management System is running successfully!</p>"
+    )
+
 
 @csrf_exempt
 def health_check(request):
     return HttpResponse("OK", status=200)
+
 
 urlpatterns = [
     path("", home_view, name="home"),

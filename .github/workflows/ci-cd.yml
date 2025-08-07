@@ -89,7 +89,7 @@ jobs:
         coverage xml
     
     - name: Upload coverage reports
-      uses: codecov/codecov-action@v3
+      uses: codecov/codecov-action@v5
       with:
         file: ./coverage.xml
         flags: unittests
@@ -114,7 +114,7 @@ jobs:
         output: 'trivy-results.sarif'
     
     - name: Upload Trivy scan results
-      uses: github/codeql-action/upload-sarif@v2
+      uses: github/codeql-action/upload-sarif@v3
       if: always()
       with:
         sarif_file: 'trivy-results.sarif'
@@ -129,6 +129,8 @@ jobs:
     outputs:
       image-tag: ${{ steps.meta.outputs.tags }}
       image-digest: ${{ steps.build.outputs.digest }}
+      dockerhub-tag: ${{ steps.meta-dockerhub.outputs.tags }}
+      dockerhub-digest: ${{ steps.build-dockerhub.outputs.digest }}
     
     steps:
     - name: Checkout code
@@ -144,7 +146,13 @@ jobs:
         username: ${{ github.actor }}
         password: ${{ secrets.GITHUB_TOKEN }}
     
-    - name: Extract metadata
+    - name: Log in to Docker Hub
+      uses: docker/login-action@v3
+      with:
+        username: ${{ secrets.DOCKER_USERNAME }}
+        password: ${{ secrets.DOCKER_PASSWORD }}
+    
+    - name: Extract metadata for GitHub Container Registry
       id: meta
       uses: docker/metadata-action@v5
       with:
@@ -155,9 +163,20 @@ jobs:
           type=sha,prefix={{branch}}-
           type=raw,value=latest,enable={{is_default_branch}}
     
-    - name: Build and push Docker image
+    - name: Extract metadata for Docker Hub
+      id: meta-dockerhub
+      uses: docker/metadata-action@v5
+      with:
+        images: ${{ secrets.DOCKER_USERNAME }}/educore-lms
+        tags: |
+          type=ref,event=branch
+          type=ref,event=pr
+          type=sha,prefix={{branch}}-
+          type=raw,value=latest,enable={{is_default_branch}}
+    
+    - name: Build and push Docker image to GitHub Container Registry
       id: build
-      uses: docker/build-push-action@v5
+      uses: docker/build-push-action@v6
       with:
         context: .
         platforms: linux/amd64,linux/arm64
@@ -166,7 +185,30 @@ jobs:
         labels: ${{ steps.meta.outputs.labels }}
         cache-from: type=gha
         cache-to: type=gha,mode=max
-
+    
+    - name: Build and push Docker image to Docker Hub
+      id: build-dockerhub
+      uses: docker/build-push-action@v6
+      with:
+        context: .
+        platforms: linux/amd64,linux/arm64
+        push: true
+        tags: ${{ steps.meta-dockerhub.outputs.tags }}
+        labels: ${{ steps.meta-dockerhub.outputs.labels }}
+        cache-from: type=gha
+        cache-to: type=gha,mode=max
+    
+    - name: Build Summary
+      run: |
+        echo "🎉 Docker images built and pushed successfully!"
+        echo "📦 GitHub Container Registry:"
+        echo "  Tags: ${{ steps.meta.outputs.tags }}"
+        echo "  Digest: ${{ steps.build.outputs.digest }}"
+        echo "🐳 Docker Hub:"
+        echo "  Tags: ${{ steps.meta-dockerhub.outputs.tags }}"
+        echo "  Digest: ${{ steps.build-dockerhub.outputs.digest }}"
+        echo "✅ Images available on both registries"
+  
   # Determine Environment and Docker Tag
   determine-environment:
     name: Determine Environment
@@ -660,22 +702,19 @@ jobs:
     
     - name: Create Release
       if: success()
-      uses: actions/create-release@v1
+      run: |
+        gh release create "v${{ github.run_number }}" \
+          --title "Release v${{ github.run_number }}" \
+          --notes "Automated release from main branch
+        
+        **Changes:**
+        ${{ github.event.head_commit.message }}
+        
+        **Docker Image:**
+        \`${{ needs.build.outputs.image-tag }}\`" \
+          --latest
       env:
         GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-      with:
-        tag_name: v${{ github.run_number }}
-        release_name: Release v${{ github.run_number }}
-        body: |
-          Automated release from main branch
-          
-          **Changes:**
-          ${{ github.event.head_commit.message }}
-          
-          **Docker Image:**
-          `${{ needs.build.outputs.image-tag }}`
-        draft: false
-        prerelease: false
 
   # Notification
   notify:
