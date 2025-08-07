@@ -164,15 +164,20 @@ jobs:
     
     - name: Run Locust load test
       run: |
-        USERS=50
-        DURATION=10
+        USERS=${LOCUST_USERS:-50}
+        DURATION=${LOCUST_DURATION:-10}
+        SPAWN_RATE=${LOCUST_SPAWN_RATE:-5}
         
-        echo "Running load test with $USERS users for ${DURATION}m"
+        echo "Running load test with $USERS users for ${DURATION}m (spawn rate: $SPAWN_RATE)"
         
         locust -f locustfile.py --host=http://localhost:8000 \
-               --users=$USERS --spawn-rate=5 \
+               --users=$USERS --spawn-rate=$SPAWN_RATE \
                --run-time=${DURATION}m --html=load_test_report.html \
                --csv=load_test_results --headless
+      env:
+        LOCUST_USERS: ${{ vars.LOCUST_USERS || '50' }}
+        LOCUST_DURATION: ${{ vars.LOCUST_DURATION || '10' }}
+        LOCUST_SPAWN_RATE: ${{ vars.LOCUST_SPAWN_RATE || '5' }}
     
     - name: Upload load test results
       uses: actions/upload-artifact@v4
@@ -234,20 +239,31 @@ jobs:
         mkdir -p tests/performance
         cat > tests/performance/test_db_performance.py << 'EOF'
         import pytest
+        import django
         from django.test import TestCase
-        from django.contrib.auth import get_user_model
         from django.db import connection
         from django.test.utils import override_settings
         import time
+        import os
         
+        # Configure Django settings before importing models
+        os.environ.setdefault('DJANGO_SETTINGS_MODULE', 'educore_lms.settings.testing')
+        django.setup()
+        
+        from django.contrib.auth import get_user_model
         User = get_user_model()
         
         class DatabasePerformanceTest(TestCase):
             
             def setUp(self):
+                # Get configurable test parameters from environment
+                self.test_user_count = int(os.environ.get('DB_TEST_USER_COUNT', '100'))
+                self.query_limit = int(os.environ.get('DB_TEST_QUERY_LIMIT', '50'))
+                self.bulk_user_count = int(os.environ.get('DB_TEST_BULK_COUNT', '100'))
+                
                 # Create test data
                 self.users = []
-                for i in range(100):
+                for i in range(self.test_user_count):
                     user = User.objects.create_user(
                         username=f'user{i}',
                         email=f'user{i}@test.com',
@@ -258,30 +274,36 @@ jobs:
             @pytest.mark.benchmark
             def test_user_query_performance(self):
                 """Test user query performance"""
+                query_threshold = float(os.environ.get('DB_QUERY_THRESHOLD', '1.0'))
+                small_query_limit = int(os.environ.get('DB_SMALL_QUERY_LIMIT', '10'))
+                
                 start_time = time.time()
                 
-                # Simulate common queries
-                users = list(User.objects.all()[:50])
-                active_users = list(User.objects.filter(is_active=True)[:25])
+                # Simulate common queries with configurable limits
+                users = list(User.objects.all()[:self.query_limit])
+                active_users = list(User.objects.filter(is_active=True)[:self.query_limit//2])
                 
                 end_time = time.time()
                 query_time = end_time - start_time
                 
-                # Assert reasonable performance (adjust thresholds as needed)
-                self.assertLess(query_time, 1.0, "User queries took too long")
+                # Assert configurable performance threshold
+                self.assertLess(query_time, query_threshold, f"User queries took {query_time:.2f}s, exceeding threshold of {query_threshold}s")
                 
-                # Check query count
+                # Check query count with configurable limit
                 with self.assertNumQueries(2):
-                    list(User.objects.all()[:10])
-                    list(User.objects.filter(is_active=True)[:10])
+                    list(User.objects.all()[:small_query_limit])
+                    list(User.objects.filter(is_active=True)[:small_query_limit])
             
             def test_bulk_operations_performance(self):
                 """Test bulk operations performance"""
+                bulk_threshold = float(os.environ.get('DB_BULK_THRESHOLD', '2.0'))
+                
                 start_time = time.time()
                 
-                # Bulk create
+                # Bulk create with configurable count
                 bulk_users = []
-                for i in range(100, 200):
+                start_id = self.test_user_count
+                for i in range(start_id, start_id + self.bulk_user_count):
                     bulk_users.append(User(
                         username=f'bulk_user{i}',
                         email=f'bulk_user{i}@test.com'
@@ -295,7 +317,7 @@ jobs:
                 end_time = time.time()
                 bulk_time = end_time - start_time
                 
-                self.assertLess(bulk_time, 2.0, "Bulk operations took too long")
+                self.assertLess(bulk_time, bulk_threshold, f"Bulk operations took {bulk_time:.2f}s, exceeding threshold of {bulk_threshold}s")
         EOF
     
     - name: Run database performance tests
@@ -308,6 +330,13 @@ jobs:
       env:
         DATABASE_URL: postgresql://postgres:postgres@localhost:5432/educore_test
         DJANGO_SETTINGS_MODULE: educore_lms.settings.testing
+        # Configurable database performance test parameters
+        DB_TEST_USER_COUNT: ${{ vars.DB_TEST_USER_COUNT || '100' }}
+        DB_TEST_QUERY_LIMIT: ${{ vars.DB_TEST_QUERY_LIMIT || '50' }}
+        DB_TEST_BULK_COUNT: ${{ vars.DB_TEST_BULK_COUNT || '100' }}
+        DB_QUERY_THRESHOLD: ${{ vars.DB_QUERY_THRESHOLD || '1.0' }}
+        DB_BULK_THRESHOLD: ${{ vars.DB_BULK_THRESHOLD || '2.0' }}
+        DB_SMALL_QUERY_LIMIT: ${{ vars.DB_SMALL_QUERY_LIMIT || '10' }}
     
     - name: Upload database performance results
       uses: actions/upload-artifact@v4
