@@ -267,7 +267,7 @@ jobs:
                     user = User.objects.create_user(
                         username=f'user{i}',
                         email=f'user{i}@test.com',
-                        password='testpass123'
+                        password='${{ secrets.TEST_DB_PASSWORD }}'
                     )
                     self.users.append(user)
             

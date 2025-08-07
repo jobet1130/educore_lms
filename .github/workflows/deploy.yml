@@ -209,27 +209,23 @@ jobs:
         
         # Create environment-specific .env file
         cat > $ENV_FILE << EOF
-        DJANGO_SETTINGS_MODULE=educore_lms.settings.$ENV
-        SECRET_KEY=${{ secrets.DJANGO_SECRET_KEY }}
-        DATABASE_URL=${{ secrets.DATABASE_URL }}
-        REDIS_URL=${{ secrets.REDIS_URL }}
-        EMAIL_HOST_PASSWORD=${{ secrets.EMAIL_HOST_PASSWORD }}
-        SENTRY_DSN=${{ secrets.SENTRY_DSN }}
-        ENVIRONMENT=$ENV
-        DOCKER_IMAGE_TAG=${{ needs.determine-environment.outputs.docker_tag }}
-        
-        # Database configuration for production
-        DB_NAME=${{ secrets.DB_NAME }}
-        DB_USER=${{ secrets.DB_USER }}
-        DB_PASSWORD=${{ secrets.DB_PASSWORD }}
-        DB_HOST=db
-        DB_PORT=5432
-        
-        # Security settings
-        ALLOWED_HOSTS=${{ secrets.ALLOWED_HOSTS }}
-        DEBUG=0
-        DJANGO_LOG_LEVEL=ERROR
-        EOF
+DJANGO_SETTINGS_MODULE=educore_lms.settings.$ENV
+SECRET_KEY=${{ secrets.DJANGO_SECRET_KEY }}
+DATABASE_URL=${{ secrets.DATABASE_URL }}
+REDIS_URL=${{ secrets.REDIS_URL }}
+EMAIL_HOST_PASSWORD=${{ secrets.EMAIL_HOST_PASSWORD }}
+SENTRY_DSN=${{ secrets.SENTRY_DSN }}
+ENVIRONMENT=$ENV
+DOCKER_IMAGE_TAG=${{ needs.determine-environment.outputs.docker_tag }}
+DB_NAME=${{ secrets.DB_NAME }}
+DB_USER=${{ secrets.DB_USER }}
+DB_PASSWORD=${{ secrets.DB_PASSWORD }}
+DB_HOST=db
+DB_PORT=5432
+ALLOWED_HOSTS=${{ secrets.ALLOWED_HOSTS }}
+DEBUG=0
+DJANGO_LOG_LEVEL=ERROR
+EOF
     
     - name: Deploy with Docker Compose
       run: |
