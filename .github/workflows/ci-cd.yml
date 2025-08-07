@@ -243,8 +243,6 @@ jobs:
         elif [[ "$BRANCH_NAME" == "qa" ]]; then
           echo "environment=sandbox" >> $GITHUB_OUTPUT
           echo "docker_tag=sandbox" >> $GITHUB_OUTPUT
-      env:
-        BRANCH_NAME: ${{ github.ref_name }}
         elif [[ "$BRANCH_NAME" == feature/* ]]; then
           echo "environment=qa" >> $GITHUB_OUTPUT
           echo "docker_tag=feature-$(echo $BRANCH_NAME | sed 's/feature\///')" >> $GITHUB_OUTPUT
@@ -262,6 +260,8 @@ jobs:
           echo "environment=development" >> $GITHUB_OUTPUT
           echo "docker_tag=dev" >> $GITHUB_OUTPUT
         fi
+      env:
+        BRANCH_NAME: ${{ github.ref_name }}
 
   # Deploy to Sandbox (qa branch only)
   deploy-sandbox:
