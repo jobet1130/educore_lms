@@ -212,10 +212,21 @@ jobs:
     - name: Create environment file
       run: |
         ENV="${{ needs.determine-environment.outputs.environment }}"
-        echo "Creating .env file for $ENV environment"
+        
+        # Map environment names for .env file creation
+        case "$ENV" in
+          "production")
+            ENV_FILE=".env.prod"
+            ;;
+          *)
+            ENV_FILE=".env.$ENV"
+            ;;
+        esac
+        
+        echo "Creating $ENV_FILE for $ENV environment"
         
         # Create environment-specific .env file
-        cat > .env << EOF
+        cat > $ENV_FILE << EOF
         DJANGO_SETTINGS_MODULE=educore_lms.settings.$ENV
         DJANGO_SECRET_KEY=${{ secrets.DJANGO_SECRET_KEY }}
         DATABASE_URL=${{ secrets.DATABASE_URL }}
