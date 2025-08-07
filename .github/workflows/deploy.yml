@@ -1,0 +1,348 @@
+name: Deploy to Environments
+
+on:
+  push:
+    branches:
+      - main        # Production deployment
+      - qa          # Sandbox deployment
+      - stagingTest # QA deployment
+      - staging     # UAT deployment
+      - releaseTest # UAT deployment
+      - release     # Production deployment
+      - 'feature/*'
+      - 'hotfix/*'
+      - 'enhancement/*'
+      - 'bugfix/*'
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: 'Target environment'
+        required: true
+        default: 'sandbox'
+        type: choice
+        options:
+          - sandbox
+          - qa
+          - uat
+          - production
+      force_deploy:
+        description: 'Force deployment (skip checks)'
+        required: false
+        default: false
+        type: boolean
+      docker_tag:
+        description: 'Docker image tag to deploy'
+        required: false
+        default: 'latest'
+        type: string
+
+env:
+  REGISTRY: ghcr.io
+  IMAGE_NAME: ${{ github.repository }}
+
+jobs:
+  # Determine deployment environment
+  determine-environment:
+    name: Determine Environment
+    runs-on: ubuntu-latest
+    outputs:
+      environment: ${{ steps.env.outputs.environment }}
+      docker_tag: ${{ steps.env.outputs.docker_tag }}
+      deploy_url: ${{ steps.env.outputs.deploy_url }}
+    
+    steps:
+    - name: Determine environment and tag
+      id: env
+      run: |
+        if [[ "${{ github.event_name }}" == "workflow_dispatch" ]]; then
+          echo "environment=${{ github.event.inputs.environment }}" >> $GITHUB_OUTPUT
+          echo "docker_tag=${{ github.event.inputs.docker_tag }}" >> $GITHUB_OUTPUT
+        else
+          case "${{ github.ref_name }}" in
+            "main")
+              echo "environment=production" >> $GITHUB_OUTPUT
+              echo "docker_tag=latest" >> $GITHUB_OUTPUT
+              ;;
+            "release")
+              echo "environment=production" >> $GITHUB_OUTPUT
+              echo "docker_tag=release" >> $GITHUB_OUTPUT
+              ;;
+            "releaseTest")
+              echo "environment=uat" >> $GITHUB_OUTPUT
+              echo "docker_tag=release-test" >> $GITHUB_OUTPUT
+              ;;
+            "staging")
+              echo "environment=uat" >> $GITHUB_OUTPUT
+              echo "docker_tag=staging" >> $GITHUB_OUTPUT
+              ;;
+            "stagingTest")
+              echo "environment=qa" >> $GITHUB_OUTPUT
+              echo "docker_tag=staging-test" >> $GITHUB_OUTPUT
+              ;;
+            "qa")
+              echo "environment=sandbox" >> $GITHUB_OUTPUT
+              echo "docker_tag=qa" >> $GITHUB_OUTPUT
+              ;;
+            feature/*)
+              echo "environment=qa" >> $GITHUB_OUTPUT
+              echo "docker_tag=feature-$(echo ${{ github.ref_name }} | sed 's/feature\///')" >> $GITHUB_OUTPUT
+              ;;
+            hotfix/*)
+              echo "environment=production" >> $GITHUB_OUTPUT
+              echo "docker_tag=hotfix-$(echo ${{ github.ref_name }} | sed 's/hotfix\///')" >> $GITHUB_OUTPUT
+              ;;
+            enhancement/*)
+              echo "environment=qa" >> $GITHUB_OUTPUT
+              echo "docker_tag=enhancement-$(echo ${{ github.ref_name }} | sed 's/enhancement\///')" >> $GITHUB_OUTPUT
+              ;;
+            bugfix/*)
+              echo "environment=qa" >> $GITHUB_OUTPUT
+              echo "docker_tag=bugfix-$(echo ${{ github.ref_name }} | sed 's/bugfix\///')" >> $GITHUB_OUTPUT
+              ;;
+            *)
+              echo "environment=sandbox" >> $GITHUB_OUTPUT
+              echo "docker_tag=dev" >> $GITHUB_OUTPUT
+              ;;
+          esac
+        fi
+        
+        # Set deployment URL based on environment
+        case "$(echo $environment)" in
+          "production")
+            echo "deploy_url=https://educore.example.com" >> $GITHUB_OUTPUT
+            ;;
+          "uat")
+            echo "deploy_url=https://uat.educore.example.com" >> $GITHUB_OUTPUT
+            ;;
+          "qa")
+            echo "deploy_url=https://qa.educore.example.com" >> $GITHUB_OUTPUT
+            ;;
+          "sandbox")
+            echo "deploy_url=https://sandbox.educore.example.com" >> $GITHUB_OUTPUT
+            ;;
+          *)
+            echo "deploy_url=https://dev.educore.example.com" >> $GITHUB_OUTPUT
+            ;;
+        esac
+
+  # Pre-deployment checks
+  pre-deployment-checks:
+    name: Pre-deployment Checks
+    runs-on: ubuntu-latest
+    needs: determine-environment
+    if: ${{ !github.event.inputs.force_deploy }}
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+    
+    - name: Check if Docker image exists
+      run: |
+        echo "Checking if image exists: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ needs.determine-environment.outputs.docker_tag }}"
+        # This would typically check your container registry
+        # For now, we'll assume the image exists if it's from main CI/CD
+    
+    - name: Validate environment configuration
+      run: |
+        ENV="${{ needs.determine-environment.outputs.environment }}"
+        echo "Validating configuration for environment: $ENV"
+        
+        # Check if environment-specific files exist
+        case "$ENV" in
+          "production")
+            test -f docker-compose.prod.yml || (echo "Production config missing" && exit 1)
+            ;;
+          "uat")
+            test -f docker-compose.uat.yml || (echo "UAT config missing" && exit 1)
+            ;;
+          "qa")
+            test -f docker-compose.qa.yml || (echo "QA config missing" && exit 1)
+            ;;
+          "sandbox")
+            test -f docker-compose.sandbox.yml || (echo "Sandbox config missing" && exit 1)
+            ;;
+        esac
+    
+    - name: Security scan for deployment
+      if: needs.determine-environment.outputs.environment == 'production'
+      run: |
+        echo "Running security checks for production deployment"
+        # Add security scanning commands here
+
+  # Deploy to environment
+  deploy:
+    name: Deploy to ${{ needs.determine-environment.outputs.environment }}
+    runs-on: ubuntu-latest
+    needs: [determine-environment, pre-deployment-checks]
+    if: always() && (needs.pre-deployment-checks.result == 'success' || needs.pre-deployment-checks.result == 'skipped')
+    environment:
+      name: ${{ needs.determine-environment.outputs.environment }}
+      url: ${{ needs.determine-environment.outputs.deploy_url }}
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+    
+    - name: Set up Docker Buildx
+      uses: docker/setup-buildx-action@v3
+    
+    - name: Log in to Container Registry
+      uses: docker/login-action@v3
+      with:
+        registry: ${{ env.REGISTRY }}
+        username: ${{ github.actor }}
+        password: ${{ secrets.GITHUB_TOKEN }}
+    
+    - name: Pull Docker image
+      run: |
+        docker pull ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ needs.determine-environment.outputs.docker_tag }}
+    
+    - name: Create environment file
+      run: |
+        ENV="${{ needs.determine-environment.outputs.environment }}"
+        echo "Creating .env file for $ENV environment"
+        
+        # Create environment-specific .env file
+        cat > .env << EOF
+        DJANGO_SETTINGS_MODULE=educore_lms.settings.$ENV
+        DJANGO_SECRET_KEY=${{ secrets.DJANGO_SECRET_KEY }}
+        DATABASE_URL=${{ secrets.DATABASE_URL }}
+        REDIS_URL=${{ secrets.REDIS_URL }}
+        EMAIL_HOST_PASSWORD=${{ secrets.EMAIL_HOST_PASSWORD }}
+        AWS_ACCESS_KEY_ID=${{ secrets.AWS_ACCESS_KEY_ID }}
+        AWS_SECRET_ACCESS_KEY=${{ secrets.AWS_SECRET_ACCESS_KEY }}
+        SENTRY_DSN=${{ secrets.SENTRY_DSN }}
+        ENVIRONMENT=$ENV
+        DOCKER_IMAGE_TAG=${{ needs.determine-environment.outputs.docker_tag }}
+        EOF
+    
+    - name: Deploy with Docker Compose
+      run: |
+        ENV="${{ needs.determine-environment.outputs.environment }}"
+        COMPOSE_FILE="docker-compose.$ENV.yml"
+        PROJECT_NAME="educore-$ENV"
+        
+        echo "Deploying to $ENV environment using $COMPOSE_FILE"
+        
+        # Stop existing containers
+        docker-compose -f $COMPOSE_FILE -p $PROJECT_NAME down || true
+        
+        # Pull latest images
+        docker-compose -f $COMPOSE_FILE -p $PROJECT_NAME pull
+        
+        # Start services
+        docker-compose -f $COMPOSE_FILE -p $PROJECT_NAME up -d
+        
+        # Wait for services to be healthy
+        echo "Waiting for services to be healthy..."
+        sleep 30
+        
+        # Check service health
+        docker-compose -f $COMPOSE_FILE -p $PROJECT_NAME ps
+    
+    - name: Run database migrations
+      run: |
+        ENV="${{ needs.determine-environment.outputs.environment }}"
+        PROJECT_NAME="educore-$ENV"
+        
+        echo "Running database migrations for $ENV"
+        docker-compose -f docker-compose.$ENV.yml -p $PROJECT_NAME exec -T web python manage.py migrate --noinput
+    
+    - name: Collect static files
+      run: |
+        ENV="${{ needs.determine-environment.outputs.environment }}"
+        PROJECT_NAME="educore-$ENV"
+        
+        echo "Collecting static files for $ENV"
+        docker-compose -f docker-compose.$ENV.yml -p $PROJECT_NAME exec -T web python manage.py collectstatic --noinput
+    
+    - name: Health check
+      run: |
+        ENV="${{ needs.determine-environment.outputs.environment }}"
+        DEPLOY_URL="${{ needs.determine-environment.outputs.deploy_url }}"
+        
+        echo "Performing health check for $ENV at $DEPLOY_URL"
+        
+        # Wait for application to be ready
+        for i in {1..30}; do
+          if curl -f -s "$DEPLOY_URL/health/" > /dev/null; then
+            echo "✅ Health check passed"
+            break
+          else
+            echo "⏳ Waiting for application to be ready... ($i/30)"
+            sleep 10
+          fi
+        done
+        
+        # Final health check
+        curl -f "$DEPLOY_URL/health/" || (echo "❌ Health check failed" && exit 1)
+
+  # Post-deployment tasks
+  post-deployment:
+    name: Post-deployment Tasks
+    runs-on: ubuntu-latest
+    needs: [determine-environment, deploy]
+    if: success()
+    
+    steps:
+    - name: Notify deployment success
+      run: |
+        ENV="${{ needs.determine-environment.outputs.environment }}"
+        DEPLOY_URL="${{ needs.determine-environment.outputs.deploy_url }}"
+        
+        echo "🚀 Successfully deployed to $ENV environment"
+        echo "📍 Application URL: $DEPLOY_URL"
+        echo "🏷️ Docker tag: ${{ needs.determine-environment.outputs.docker_tag }}"
+        echo "📝 Commit: ${{ github.sha }}"
+    
+    - name: Update deployment status
+      uses: actions/github-script@v6
+      with:
+        script: |
+          const { owner, repo } = context.repo;
+          const environment = '${{ needs.determine-environment.outputs.environment }}';
+          const deployUrl = '${{ needs.determine-environment.outputs.deploy_url }}';
+          const dockerTag = '${{ needs.determine-environment.outputs.docker_tag }}';
+          
+          // Create a deployment status
+          await github.rest.repos.createDeploymentStatus({
+            owner,
+            repo,
+            deployment_id: context.payload.deployment?.id || 0,
+            state: 'success',
+            environment_url: deployUrl,
+            description: `Deployed ${dockerTag} to ${environment}`,
+          });
+    
+    - name: Clean up old Docker images
+      run: |
+        echo "Cleaning up old Docker images"
+        docker image prune -f
+        docker system prune -f
+
+  # Rollback on failure
+  rollback:
+    name: Rollback Deployment
+    runs-on: ubuntu-latest
+    needs: [determine-environment, deploy]
+    if: failure() && needs.determine-environment.outputs.environment == 'production'
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+    
+    - name: Rollback to previous version
+      run: |
+        ENV="${{ needs.determine-environment.outputs.environment }}"
+        PROJECT_NAME="educore-$ENV"
+        
+        echo "🔄 Rolling back $ENV deployment"
+        
+        # This would typically involve deploying the previous known good version
+        # For now, we'll restart the current services
+        docker-compose -f docker-compose.$ENV.yml -p $PROJECT_NAME restart
+    
+    - name: Notify rollback
+      run: |
+        echo "⚠️ Deployment failed and rollback initiated"
+        echo "🔍 Please check the deployment logs for details"

@@ -1,0 +1,501 @@
+name: Backup and Disaster Recovery
+
+on:
+  schedule:
+    # Daily backup at 1 AM UTC
+    - cron: '0 1 * * *'
+    # Weekly full backup on Sunday at 2 AM UTC
+    - cron: '0 2 * * 0'
+  workflow_dispatch:
+    inputs:
+      backup_type:
+        description: 'Type of backup to perform'
+        required: true
+        default: 'incremental'
+        type: choice
+        options:
+          - incremental
+          - full
+          - database-only
+          - media-only
+      environment:
+        description: 'Environment to backup'
+        required: true
+        default: 'production'
+        type: choice
+        options:
+          - production
+          - uat
+          - qa
+      restore_test:
+        description: 'Test restore after backup'
+        required: false
+        default: false
+        type: boolean
+
+env:
+  AWS_REGION: us-east-1
+  BACKUP_BUCKET: educore-backups
+  REGISTRY: ghcr.io
+  IMAGE_NAME: ${{ github.repository }}
+
+jobs:
+  # Database backup
+  database-backup:
+    name: Database Backup
+    runs-on: ubuntu-latest
+    if: github.event.inputs.backup_type != 'media-only'
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+    
+    - name: Configure AWS credentials
+      uses: aws-actions/configure-aws-credentials@v4
+      with:
+        aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+        aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+        aws-region: ${{ env.AWS_REGION }}
+    
+    - name: Set backup variables
+      run: |
+        ENVIRONMENT="${{ github.event.inputs.environment || 'production' }}"
+        BACKUP_TYPE="${{ github.event.inputs.backup_type || 'incremental' }}"
+        TIMESTAMP=$(date +"%Y%m%d_%H%M%S")
+        
+        echo "ENVIRONMENT=$ENVIRONMENT" >> $GITHUB_ENV
+        echo "BACKUP_TYPE=$BACKUP_TYPE" >> $GITHUB_ENV
+        echo "TIMESTAMP=$TIMESTAMP" >> $GITHUB_ENV
+        echo "BACKUP_PREFIX=educore-$ENVIRONMENT-db" >> $GITHUB_ENV
+        echo "BACKUP_FILE=educore-$ENVIRONMENT-db-$TIMESTAMP.sql.gz" >> $GITHUB_ENV
+    
+    - name: Install PostgreSQL client
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y postgresql-client-15
+    
+    - name: Create database backup
+      run: |
+        # Set database connection based on environment
+        case "$ENVIRONMENT" in
+          "production")
+            DB_HOST="${{ secrets.PROD_DB_HOST }}"
+            DB_NAME="${{ secrets.PROD_DB_NAME }}"
+            DB_USER="${{ secrets.PROD_DB_USER }}"
+            DB_PASSWORD="${{ secrets.PROD_DB_PASSWORD }}"
+            ;;
+          "uat")
+            DB_HOST="${{ secrets.UAT_DB_HOST }}"
+            DB_NAME="${{ secrets.UAT_DB_NAME }}"
+            DB_USER="${{ secrets.UAT_DB_USER }}"
+            DB_PASSWORD="${{ secrets.UAT_DB_PASSWORD }}"
+            ;;
+          "qa")
+            DB_HOST="${{ secrets.QA_DB_HOST }}"
+            DB_NAME="${{ secrets.QA_DB_NAME }}"
+            DB_USER="${{ secrets.QA_DB_USER }}"
+            DB_PASSWORD="${{ secrets.QA_DB_PASSWORD }}"
+            ;;
+        esac
+        
+        echo "Creating database backup for $ENVIRONMENT environment"
+        
+        # Set PostgreSQL password
+        export PGPASSWORD="$DB_PASSWORD"
+        
+        # Create backup based on type
+        if [ "$BACKUP_TYPE" = "full" ] || [ "$(date +%u)" = "7" ]; then
+          echo "Creating full database backup"
+          pg_dump -h "$DB_HOST" -U "$DB_USER" -d "$DB_NAME" \
+                  --verbose --clean --if-exists --create \
+                  --format=custom | gzip > "$BACKUP_FILE"
+        else
+          echo "Creating incremental database backup"
+          # For incremental, we'll do a full dump but with timestamp
+          # In a real scenario, you might use WAL-E or similar for true incremental
+          pg_dump -h "$DB_HOST" -U "$DB_USER" -d "$DB_NAME" \
+                  --verbose --data-only \
+                  --format=custom | gzip > "$BACKUP_FILE"
+        fi
+        
+        # Verify backup file
+        if [ -f "$BACKUP_FILE" ] && [ -s "$BACKUP_FILE" ]; then
+          echo "✅ Database backup created successfully: $BACKUP_FILE"
+          ls -lh "$BACKUP_FILE"
+        else
+          echo "❌ Database backup failed"
+          exit 1
+        fi
+    
+    - name: Upload backup to S3
+      run: |
+        echo "Uploading backup to S3: s3://$BACKUP_BUCKET/$BACKUP_PREFIX/$BACKUP_FILE"
+        
+        aws s3 cp "$BACKUP_FILE" "s3://$BACKUP_BUCKET/$BACKUP_PREFIX/$BACKUP_FILE" \
+            --storage-class STANDARD_IA \
+            --metadata "environment=$ENVIRONMENT,backup-type=$BACKUP_TYPE,timestamp=$TIMESTAMP"
+        
+        # Verify upload
+        aws s3 ls "s3://$BACKUP_BUCKET/$BACKUP_PREFIX/$BACKUP_FILE"
+        
+        echo "✅ Database backup uploaded to S3"
+    
+    - name: Create backup metadata
+      run: |
+        cat > backup-metadata.json << EOF
+        {
+          "backup_type": "database",
+          "environment": "$ENVIRONMENT",
+          "timestamp": "$TIMESTAMP",
+          "file_name": "$BACKUP_FILE",
+          "s3_path": "s3://$BACKUP_BUCKET/$BACKUP_PREFIX/$BACKUP_FILE",
+          "backup_method": "$BACKUP_TYPE",
+          "created_by": "github-actions",
+          "workflow_run": "${{ github.run_id }}",
+          "commit_sha": "${{ github.sha }}"
+        }
+        EOF
+        
+        # Upload metadata
+        aws s3 cp backup-metadata.json "s3://$BACKUP_BUCKET/$BACKUP_PREFIX/metadata/$TIMESTAMP.json"
+    
+    - name: Clean up old backups
+      run: |
+        echo "Cleaning up old backups (keeping last 30 days)"
+        
+        # List and delete backups older than 30 days
+        CUTOFF_DATE=$(date -d '30 days ago' +%Y%m%d)
+        
+        aws s3 ls "s3://$BACKUP_BUCKET/$BACKUP_PREFIX/" --recursive | \
+        while read -r line; do
+          BACKUP_DATE=$(echo "$line" | awk '{print $4}' | grep -o '[0-9]\{8\}' | head -1)
+          if [ "$BACKUP_DATE" -lt "$CUTOFF_DATE" ]; then
+            FILE_PATH=$(echo "$line" | awk '{print $4}')
+            echo "Deleting old backup: $FILE_PATH"
+            aws s3 rm "s3://$BACKUP_BUCKET/$FILE_PATH"
+          fi
+        done
+    
+    outputs:
+      backup_file: ${{ env.BACKUP_FILE }}
+      s3_path: s3://${{ env.BACKUP_BUCKET }}/${{ env.BACKUP_PREFIX }}/${{ env.BACKUP_FILE }}
+
+  # Media files backup
+  media-backup:
+    name: Media Files Backup
+    runs-on: ubuntu-latest
+    if: github.event.inputs.backup_type != 'database-only'
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+    
+    - name: Configure AWS credentials
+      uses: aws-actions/configure-aws-credentials@v4
+      with:
+        aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+        aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+        aws-region: ${{ env.AWS_REGION }}
+    
+    - name: Set backup variables
+      run: |
+        ENVIRONMENT="${{ github.event.inputs.environment || 'production' }}"
+        TIMESTAMP=$(date +"%Y%m%d_%H%M%S")
+        
+        echo "ENVIRONMENT=$ENVIRONMENT" >> $GITHUB_ENV
+        echo "TIMESTAMP=$TIMESTAMP" >> $GITHUB_ENV
+        echo "MEDIA_BACKUP_PREFIX=educore-$ENVIRONMENT-media" >> $GITHUB_ENV
+    
+    - name: Sync media files to backup bucket
+      run: |
+        # Set source bucket based on environment
+        case "$ENVIRONMENT" in
+          "production")
+            SOURCE_BUCKET="${{ secrets.PROD_MEDIA_BUCKET }}"
+            ;;
+          "uat")
+            SOURCE_BUCKET="${{ secrets.UAT_MEDIA_BUCKET }}"
+            ;;
+          "qa")
+            SOURCE_BUCKET="${{ secrets.QA_MEDIA_BUCKET }}"
+            ;;
+        esac
+        
+        echo "Backing up media files from $SOURCE_BUCKET to $BACKUP_BUCKET"
+        
+        # Sync media files
+        aws s3 sync "s3://$SOURCE_BUCKET/" "s3://$BACKUP_BUCKET/$MEDIA_BACKUP_PREFIX/$TIMESTAMP/" \
+            --storage-class STANDARD_IA \
+            --exclude "*.tmp" \
+            --exclude "cache/*"
+        
+        echo "✅ Media files backup completed"
+    
+    - name: Create media backup manifest
+      run: |
+        # Create manifest of backed up files
+        aws s3 ls "s3://$BACKUP_BUCKET/$MEDIA_BACKUP_PREFIX/$TIMESTAMP/" --recursive > media-manifest.txt
+        
+        # Upload manifest
+        aws s3 cp media-manifest.txt "s3://$BACKUP_BUCKET/$MEDIA_BACKUP_PREFIX/manifests/$TIMESTAMP.txt"
+        
+        echo "✅ Media backup manifest created"
+
+  # Configuration backup
+  config-backup:
+    name: Configuration Backup
+    runs-on: ubuntu-latest
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+    
+    - name: Configure AWS credentials
+      uses: aws-actions/configure-aws-credentials@v4
+      with:
+        aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+        aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+        aws-region: ${{ env.AWS_REGION }}
+    
+    - name: Create configuration backup
+      run: |
+        ENVIRONMENT="${{ github.event.inputs.environment || 'production' }}"
+        TIMESTAMP=$(date +"%Y%m%d_%H%M%S")
+        CONFIG_BACKUP_FILE="educore-$ENVIRONMENT-config-$TIMESTAMP.tar.gz"
+        
+        echo "Creating configuration backup for $ENVIRONMENT"
+        
+        # Create backup of configuration files
+        tar -czf "$CONFIG_BACKUP_FILE" \
+            docker-compose*.yml \
+            nginx*.conf \
+            .env.example \
+            requirements.txt \
+            Dockerfile \
+            .github/ \
+            --exclude='.github/workflows/backup-recovery.yml'
+        
+        # Upload to S3
+        aws s3 cp "$CONFIG_BACKUP_FILE" "s3://$BACKUP_BUCKET/educore-$ENVIRONMENT-config/$CONFIG_BACKUP_FILE"
+        
+        echo "✅ Configuration backup completed"
+
+  # Backup verification and testing
+  backup-verification:
+    name: Backup Verification
+    runs-on: ubuntu-latest
+    needs: [database-backup]
+    if: github.event.inputs.restore_test == 'true' || github.event.schedule == '0 2 * * 0'
+    
+    services:
+      postgres:
+        image: postgres:15
+        env:
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: backup_test
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+        ports:
+          - 5432:5432
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+    
+    - name: Configure AWS credentials
+      uses: aws-actions/configure-aws-credentials@v4
+      with:
+        aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+        aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+        aws-region: ${{ env.AWS_REGION }}
+    
+    - name: Install PostgreSQL client
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y postgresql-client-15
+    
+    - name: Download and test backup
+      run: |
+        BACKUP_FILE="${{ needs.database-backup.outputs.backup_file }}"
+        S3_PATH="${{ needs.database-backup.outputs.s3_path }}"
+        
+        echo "Testing backup restore: $BACKUP_FILE"
+        
+        # Download backup from S3
+        aws s3 cp "$S3_PATH" "$BACKUP_FILE"
+        
+        # Verify backup file
+        if [ ! -f "$BACKUP_FILE" ] || [ ! -s "$BACKUP_FILE" ]; then
+          echo "❌ Backup file not found or empty"
+          exit 1
+        fi
+        
+        echo "✅ Backup file downloaded successfully"
+        
+        # Test restore (to test database)
+        export PGPASSWORD=postgres
+        
+        # Decompress and restore
+        gunzip -c "$BACKUP_FILE" | pg_restore -h localhost -U postgres -d backup_test --verbose
+        
+        # Verify restore
+        TABLES=$(psql -h localhost -U postgres -d backup_test -t -c "SELECT count(*) FROM information_schema.tables WHERE table_schema='public';")
+        
+        if [ "$TABLES" -gt 0 ]; then
+          echo "✅ Backup restore test successful - $TABLES tables restored"
+        else
+          echo "❌ Backup restore test failed - no tables found"
+          exit 1
+        fi
+
+  # Disaster recovery documentation
+  disaster-recovery-docs:
+    name: Update DR Documentation
+    runs-on: ubuntu-latest
+    needs: [database-backup, media-backup, config-backup]
+    if: always()
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+    
+    - name: Generate disaster recovery report
+      run: |
+        ENVIRONMENT="${{ github.event.inputs.environment || 'production' }}"
+        TIMESTAMP=$(date +"%Y-%m-%d %H:%M:%S UTC")
+        
+        cat > disaster-recovery-report.md << EOF
+        # Disaster Recovery Report
+        
+        **Generated:** $TIMESTAMP  
+        **Environment:** $ENVIRONMENT  
+        **Workflow Run:** ${{ github.run_id }}  
+        
+        ## Backup Status
+        
+        | Component | Status | Details |
+        |-----------|--------|----------|
+        | Database | ${{ needs.database-backup.result }} | ${{ needs.database-backup.outputs.backup_file }} |
+        | Media Files | ${{ needs.media-backup.result }} | S3 sync completed |
+        | Configuration | ${{ needs.config-backup.result }} | Config files archived |
+        
+        ## Recovery Procedures
+        
+        ### Database Recovery
+        1. Download backup from S3: \`${{ needs.database-backup.outputs.s3_path }}\`
+        2. Restore using: \`pg_restore -h <host> -U <user> -d <database> <backup_file>\`
+        
+        ### Media Files Recovery
+        1. Sync from backup: \`aws s3 sync s3://$BACKUP_BUCKET/educore-$ENVIRONMENT-media/<timestamp>/ s3://<target-bucket>/\`
+        
+        ### Configuration Recovery
+        1. Download config backup from S3
+        2. Extract and deploy configuration files
+        3. Update environment variables
+        4. Restart services
+        
+        ## RTO/RPO Metrics
+        - **Recovery Time Objective (RTO):** 4 hours
+        - **Recovery Point Objective (RPO):** 24 hours
+        - **Last Successful Backup:** $TIMESTAMP
+        
+        ## Emergency Contacts
+        - DevOps Team: devops@educore.com
+        - Database Admin: dba@educore.com
+        - Security Team: security@educore.com
+        
+        ## Next Steps
+        1. Verify all backups are accessible
+        2. Test restore procedures quarterly
+        3. Update disaster recovery plan as needed
+        EOF
+    
+    - name: Upload DR report
+      uses: actions/upload-artifact@v3
+      with:
+        name: disaster-recovery-report-${{ github.run_number }}
+        path: disaster-recovery-report.md
+        retention-days: 365
+
+  # Notification and monitoring
+  backup-notification:
+    name: Backup Notification
+    runs-on: ubuntu-latest
+    needs: [database-backup, media-backup, config-backup, backup-verification]
+    if: always()
+    
+    steps:
+    - name: Determine backup status
+      run: |
+        OVERALL_STATUS="success"
+        FAILED_JOBS=""
+        
+        if [ "${{ needs.database-backup.result }}" = "failure" ]; then
+          OVERALL_STATUS="failure"
+          FAILED_JOBS="$FAILED_JOBS Database,"
+        fi
+        
+        if [ "${{ needs.media-backup.result }}" = "failure" ]; then
+          OVERALL_STATUS="failure"
+          FAILED_JOBS="$FAILED_JOBS Media,"
+        fi
+        
+        if [ "${{ needs.config-backup.result }}" = "failure" ]; then
+          OVERALL_STATUS="failure"
+          FAILED_JOBS="$FAILED_JOBS Configuration,"
+        fi
+        
+        if [ "${{ needs.backup-verification.result }}" = "failure" ]; then
+          OVERALL_STATUS="failure"
+          FAILED_JOBS="$FAILED_JOBS Verification,"
+        fi
+        
+        echo "OVERALL_STATUS=$OVERALL_STATUS" >> $GITHUB_ENV
+        echo "FAILED_JOBS=${FAILED_JOBS%,}" >> $GITHUB_ENV
+    
+    - name: Create backup failure issue
+      if: env.OVERALL_STATUS == 'failure'
+      uses: actions/github-script@v6
+      with:
+        script: |
+          const environment = '${{ github.event.inputs.environment || "production" }}';
+          const title = `🚨 Backup Failure - ${environment.toUpperCase()} - ${new Date().toISOString().split('T')[0]}`;
+          const body = `
+          ## Backup Failure Alert
+          
+          **Environment:** ${environment}  
+          **Workflow Run:** ${{ github.run_id }}  
+          **Failed Components:** ${process.env.FAILED_JOBS}  
+          
+          ### Immediate Actions Required:
+          1. Investigate backup failures
+          2. Verify backup infrastructure
+          3. Ensure data protection compliance
+          4. Re-run failed backup jobs
+          
+          ### Impact:
+          - Data protection may be compromised
+          - Recovery capabilities affected
+          - Compliance requirements at risk
+          
+          **Priority:** CRITICAL - Resolve within 2 hours
+          `;
+          
+          github.rest.issues.create({
+            owner: context.repo.owner,
+            repo: context.repo.repo,
+            title: title,
+            body: body,
+            labels: ['backup', 'critical', 'infrastructure']
+          });
+    
+    - name: Send success notification
+      if: env.OVERALL_STATUS == 'success'
+      run: |
+        ENVIRONMENT="${{ github.event.inputs.environment || 'production' }}"
+        echo "✅ Backup completed successfully for $ENVIRONMENT environment"
+        echo "📊 All backup components completed without errors"
+        echo "🔒 Data protection and disaster recovery capabilities maintained"

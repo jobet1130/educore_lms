@@ -1,0 +1,158 @@
+version: 2
+updates:
+  # Python dependencies
+  - package-ecosystem: "pip"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+      time: "09:00"
+      timezone: "UTC"
+    open-pull-requests-limit: 10
+    reviewers:
+      - "@educore-team"
+    assignees:
+      - "@educore-team"
+    commit-message:
+      prefix: "deps"
+      prefix-development: "deps-dev"
+      include: "scope"
+    labels:
+      - "dependencies"
+      - "python"
+    ignore:
+      # Ignore major version updates for critical packages
+      - dependency-name: "django"
+        update-types: ["version-update:semver-major"]
+      - dependency-name: "psycopg2-binary"
+        update-types: ["version-update:semver-major"]
+    groups:
+      django-ecosystem:
+        patterns:
+          - "django*"
+          - "djangorestframework*"
+        update-types:
+          - "minor"
+          - "patch"
+      testing-tools:
+        patterns:
+          - "pytest*"
+          - "coverage*"
+          - "factory-boy"
+        update-types:
+          - "minor"
+          - "patch"
+      security-tools:
+        patterns:
+          - "bandit"
+          - "safety"
+          - "semgrep"
+        update-types:
+          - "minor"
+          - "patch"
+
+  # Docker dependencies
+  - package-ecosystem: "docker"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+      day: "tuesday"
+      time: "09:00"
+      timezone: "UTC"
+    open-pull-requests-limit: 5
+    reviewers:
+      - "@educore-team"
+    assignees:
+      - "@educore-team"
+    commit-message:
+      prefix: "docker"
+      include: "scope"
+    labels:
+      - "dependencies"
+      - "docker"
+    ignore:
+      # Ignore major version updates for base images
+      - dependency-name: "python"
+        update-types: ["version-update:semver-major"]
+      - dependency-name: "postgres"
+        update-types: ["version-update:semver-major"]
+      - dependency-name: "nginx"
+        update-types: ["version-update:semver-major"]
+
+  # GitHub Actions dependencies
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+      day: "wednesday"
+      time: "09:00"
+      timezone: "UTC"
+    open-pull-requests-limit: 5
+    reviewers:
+      - "@educore-team"
+    assignees:
+      - "@educore-team"
+    commit-message:
+      prefix: "ci"
+      include: "scope"
+    labels:
+      - "dependencies"
+      - "github-actions"
+    groups:
+      actions-ecosystem:
+        patterns:
+          - "actions/*"
+        update-types:
+          - "minor"
+          - "patch"
+      docker-actions:
+        patterns:
+          - "docker/*"
+        update-types:
+          - "minor"
+          - "patch"
+
+  # Dockerfile for development
+  - package-ecosystem: "docker"
+    directory: "/"
+    target-branch: "develop"
+    schedule:
+      interval: "daily"
+      time: "10:00"
+      timezone: "UTC"
+    open-pull-requests-limit: 3
+    reviewers:
+      - "@educore-team"
+    commit-message:
+      prefix: "docker-dev"
+      include: "scope"
+    labels:
+      - "dependencies"
+      - "docker"
+      - "development"
+
+  # Security updates (more frequent)
+  - package-ecosystem: "pip"
+    directory: "/"
+    schedule:
+      interval: "daily"
+      time: "08:00"
+      timezone: "UTC"
+    open-pull-requests-limit: 5
+    reviewers:
+      - "@educore-team"
+    assignees:
+      - "@educore-team"
+    commit-message:
+      prefix: "security"
+      include: "scope"
+    labels:
+      - "dependencies"
+      - "security"
+      - "high-priority"
+    # Only security updates
+    allow:
+      - dependency-type: "direct"
+        update-type: "security"
+      - dependency-type: "indirect"
+        update-type: "security"

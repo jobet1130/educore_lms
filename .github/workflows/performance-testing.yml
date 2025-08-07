@@ -1,0 +1,534 @@
+name: Performance Testing
+
+on:
+  schedule:
+    # Run performance tests weekly on Sunday at 3 AM UTC
+    - cron: '0 3 * * 0'
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: 'Target environment for testing'
+        required: true
+        default: 'qa'
+        type: choice
+        options:
+          - qa
+          - uat
+          - sandbox
+          - production
+      test_duration:
+        description: 'Test duration in minutes'
+        required: false
+        default: '10'
+        type: string
+      concurrent_users:
+        description: 'Number of concurrent users'
+        required: false
+        default: '50'
+        type: string
+  push:
+    branches:
+      - main
+      - qa
+      - stagingTest
+      - staging
+      - releaseTest
+      - release
+      - 'feature/*'
+      - 'hotfix/*'
+      - 'enhancement/*'
+      - 'bugfix/*'
+    paths:
+      - '**/*.py'
+      - 'requirements.txt'
+      - 'docker-compose*.yml'
+
+env:
+  REGISTRY: ghcr.io
+  IMAGE_NAME: ${{ github.repository }}
+
+jobs:
+  # Load testing with Locust
+  load-testing:
+    name: Load Testing
+    runs-on: ubuntu-latest
+    
+    services:
+      postgres:
+        image: postgres:15
+        env:
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: educore_test
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+        ports:
+          - 5432:5432
+      
+      redis:
+        image: redis:7-alpine
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+        ports:
+          - 6379:6379
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+    
+    - name: Set up Python
+      uses: actions/setup-python@v4
+      with:
+        python-version: '3.11'
+    
+    - name: Install dependencies
+      run: |
+        python -m pip install --upgrade pip
+        pip install locust pytest-benchmark django-silk
+        pip install -r requirements.txt
+    
+    - name: Set up test environment
+      run: |
+        export DATABASE_URL="postgresql://postgres:postgres@localhost:5432/educore_test"
+        export REDIS_URL="redis://localhost:6379/0"
+        export DJANGO_SETTINGS_MODULE="educore_lms.settings.testing"
+        
+        # Run migrations
+        python manage.py migrate --noinput
+        
+        # Create test data
+        python manage.py loaddata fixtures/test_data.json || echo "No test fixtures found"
+        
+        # Create superuser for testing
+        echo "from django.contrib.auth import get_user_model; User = get_user_model(); User.objects.create_superuser('admin', 'admin@test.com', 'admin123') if not User.objects.filter(username='admin').exists() else None" | python manage.py shell
+    
+    - name: Start Django development server
+      run: |
+        export DATABASE_URL="postgresql://postgres:postgres@localhost:5432/educore_test"
+        export REDIS_URL="redis://localhost:6379/0"
+        export DJANGO_SETTINGS_MODULE="educore_lms.settings.testing"
+        
+        python manage.py runserver 0.0.0.0:8000 &
+        
+        # Wait for server to start
+        sleep 10
+        
+        # Health check
+        curl -f http://localhost:8000/health/ || (echo "Server failed to start" && exit 1)
+      env:
+        DATABASE_URL: postgresql://postgres:postgres@localhost:5432/educore_test
+        REDIS_URL: redis://localhost:6379/0
+        DJANGO_SETTINGS_MODULE: educore_lms.settings.testing
+    
+    - name: Create Locust test file
+      run: |
+        cat > locustfile.py << 'EOF'
+        from locust import HttpUser, task, between
+        import random
+        import json
+        
+        class EduCoreUser(HttpUser):
+            wait_time = between(1, 3)
+            
+            def on_start(self):
+                # Login
+                response = self.client.get("/accounts/login/")
+                csrftoken = response.cookies.get('csrftoken')
+                
+                login_data = {
+                    'username': 'admin',
+                    'password': 'admin123',
+                    'csrfmiddlewaretoken': csrftoken
+                }
+                
+                self.client.post("/accounts/login/", data=login_data, headers={
+                    'X-CSRFToken': csrftoken,
+                    'Referer': 'http://localhost:8000/accounts/login/'
+                })
+            
+            @task(3)
+            def view_homepage(self):
+                self.client.get("/")
+            
+            @task(2)
+            def view_courses(self):
+                self.client.get("/courses/")
+            
+            @task(2)
+            def view_dashboard(self):
+                self.client.get("/dashboard/")
+            
+            @task(1)
+            def view_profile(self):
+                self.client.get("/profile/")
+            
+            @task(1)
+            def api_courses(self):
+                self.client.get("/api/courses/")
+            
+            @task(1)
+            def search_courses(self):
+                search_terms = ['python', 'django', 'web', 'programming', 'data']
+                term = random.choice(search_terms)
+                self.client.get(f"/courses/search/?q={term}")
+        EOF
+    
+    - name: Run Locust load test
+      run: |
+        USERS=${{ github.event.inputs.concurrent_users || '50' }}
+        DURATION=${{ github.event.inputs.test_duration || '10' }}
+        
+        echo "Running load test with $USERS users for ${DURATION}m"
+        
+        locust -f locustfile.py --host=http://localhost:8000 \
+               --users=$USERS --spawn-rate=5 \
+               --run-time=${DURATION}m --html=load_test_report.html \
+               --csv=load_test_results --headless
+    
+    - name: Upload load test results
+      uses: actions/upload-artifact@v3
+      if: always()
+      with:
+        name: load-test-results-${{ github.run_number }}
+        path: |
+          load_test_report.html
+          load_test_results_*.csv
+        retention-days: 30
+
+  # Database performance testing
+  database-performance:
+    name: Database Performance
+    runs-on: ubuntu-latest
+    
+    services:
+      postgres:
+        image: postgres:15
+        env:
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: educore_test
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+        ports:
+          - 5432:5432
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+    
+    - name: Set up Python
+      uses: actions/setup-python@v4
+      with:
+        python-version: '3.11'
+    
+    - name: Install dependencies
+      run: |
+        python -m pip install --upgrade pip
+        pip install pytest-benchmark django-extensions
+        pip install -r requirements.txt
+    
+    - name: Set up test database
+      run: |
+        export DATABASE_URL="postgresql://postgres:postgres@localhost:5432/educore_test"
+        export DJANGO_SETTINGS_MODULE="educore_lms.settings.testing"
+        
+        python manage.py migrate --noinput
+        python manage.py loaddata fixtures/test_data.json || echo "No test fixtures found"
+      env:
+        DATABASE_URL: postgresql://postgres:postgres@localhost:5432/educore_test
+        DJANGO_SETTINGS_MODULE: educore_lms.settings.testing
+    
+    - name: Create database performance tests
+      run: |
+        mkdir -p tests/performance
+        cat > tests/performance/test_db_performance.py << 'EOF'
+        import pytest
+        from django.test import TestCase
+        from django.contrib.auth import get_user_model
+        from django.db import connection
+        from django.test.utils import override_settings
+        import time
+        
+        User = get_user_model()
+        
+        class DatabasePerformanceTest(TestCase):
+            
+            def setUp(self):
+                # Create test data
+                self.users = []
+                for i in range(100):
+                    user = User.objects.create_user(
+                        username=f'user{i}',
+                        email=f'user{i}@test.com',
+                        password='testpass123'
+                    )
+                    self.users.append(user)
+            
+            @pytest.mark.benchmark
+            def test_user_query_performance(self):
+                """Test user query performance"""
+                start_time = time.time()
+                
+                # Simulate common queries
+                users = list(User.objects.all()[:50])
+                active_users = list(User.objects.filter(is_active=True)[:25])
+                
+                end_time = time.time()
+                query_time = end_time - start_time
+                
+                # Assert reasonable performance (adjust thresholds as needed)
+                self.assertLess(query_time, 1.0, "User queries took too long")
+                
+                # Check query count
+                with self.assertNumQueries(2):
+                    list(User.objects.all()[:10])
+                    list(User.objects.filter(is_active=True)[:10])
+            
+            def test_bulk_operations_performance(self):
+                """Test bulk operations performance"""
+                start_time = time.time()
+                
+                # Bulk create
+                bulk_users = []
+                for i in range(100, 200):
+                    bulk_users.append(User(
+                        username=f'bulk_user{i}',
+                        email=f'bulk_user{i}@test.com'
+                    ))
+                
+                User.objects.bulk_create(bulk_users)
+                
+                # Bulk update
+                User.objects.filter(username__startswith='bulk_').update(is_active=False)
+                
+                end_time = time.time()
+                bulk_time = end_time - start_time
+                
+                self.assertLess(bulk_time, 2.0, "Bulk operations took too long")
+        EOF
+    
+    - name: Run database performance tests
+      run: |
+        export DATABASE_URL="postgresql://postgres:postgres@localhost:5432/educore_test"
+        export DJANGO_SETTINGS_MODULE="educore_lms.settings.testing"
+        
+        python -m pytest tests/performance/test_db_performance.py -v \
+               --benchmark-only --benchmark-json=db_benchmark.json
+      env:
+        DATABASE_URL: postgresql://postgres:postgres@localhost:5432/educore_test
+        DJANGO_SETTINGS_MODULE: educore_lms.settings.testing
+    
+    - name: Upload database performance results
+      uses: actions/upload-artifact@v3
+      if: always()
+      with:
+        name: db-performance-results-${{ github.run_number }}
+        path: db_benchmark.json
+        retention-days: 30
+
+  # Frontend performance testing
+  frontend-performance:
+    name: Frontend Performance
+    runs-on: ubuntu-latest
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+    
+    - name: Set up Node.js
+      uses: actions/setup-node@v4
+      with:
+        node-version: '18'
+    
+    - name: Install Lighthouse CI
+      run: |
+        npm install -g @lhci/cli@0.12.x
+    
+    - name: Set up Python and Django
+      uses: actions/setup-python@v4
+      with:
+        python-version: '3.11'
+    
+    - name: Install Python dependencies
+      run: |
+        python -m pip install --upgrade pip
+        pip install -r requirements.txt
+    
+    - name: Start Django server for Lighthouse
+      run: |
+        export DJANGO_SETTINGS_MODULE="educore_lms.settings.testing"
+        export DATABASE_URL="sqlite:///test.db"
+        
+        python manage.py migrate --noinput
+        python manage.py collectstatic --noinput
+        python manage.py runserver 0.0.0.0:8000 &
+        
+        # Wait for server
+        sleep 15
+        curl -f http://localhost:8000/ || (echo "Server failed to start" && exit 1)
+      env:
+        DJANGO_SETTINGS_MODULE: educore_lms.settings.testing
+        DATABASE_URL: sqlite:///test.db
+    
+    - name: Create Lighthouse CI config
+      run: |
+        cat > lighthouserc.js << 'EOF'
+        module.exports = {
+          ci: {
+            collect: {
+              url: [
+                'http://localhost:8000/',
+                'http://localhost:8000/courses/',
+                'http://localhost:8000/accounts/login/',
+              ],
+              numberOfRuns: 3,
+            },
+            assert: {
+              assertions: {
+                'categories:performance': ['warn', {minScore: 0.7}],
+                'categories:accessibility': ['error', {minScore: 0.9}],
+                'categories:best-practices': ['warn', {minScore: 0.8}],
+                'categories:seo': ['warn', {minScore: 0.8}],
+              },
+            },
+            upload: {
+              target: 'filesystem',
+              outputDir: './lighthouse-results',
+            },
+          },
+        };
+        EOF
+    
+    - name: Run Lighthouse CI
+      run: |
+        lhci autorun
+    
+    - name: Upload Lighthouse results
+      uses: actions/upload-artifact@v3
+      if: always()
+      with:
+        name: lighthouse-results-${{ github.run_number }}
+        path: lighthouse-results/
+        retention-days: 30
+
+  # Performance monitoring and alerting
+  performance-monitoring:
+    name: Performance Monitoring
+    runs-on: ubuntu-latest
+    needs: [load-testing, database-performance, frontend-performance]
+    if: always()
+    
+    steps:
+    - name: Download all performance artifacts
+      uses: actions/download-artifact@v3
+    
+    - name: Analyze performance results
+      run: |
+        echo "# Performance Test Summary - $(date)" > performance-summary.md
+        echo "" >> performance-summary.md
+        
+        # Load test results
+        if [ -f "load-test-results-${{ github.run_number }}/load_test_results_stats.csv" ]; then
+          echo "## Load Testing Results" >> performance-summary.md
+          echo "\`\`\`" >> performance-summary.md
+          head -10 "load-test-results-${{ github.run_number }}/load_test_results_stats.csv" >> performance-summary.md
+          echo "\`\`\`" >> performance-summary.md
+          echo "" >> performance-summary.md
+        fi
+        
+        # Database performance
+        if [ -f "db-performance-results-${{ github.run_number }}/db_benchmark.json" ]; then
+          echo "## Database Performance" >> performance-summary.md
+          echo "Database benchmark results available in artifacts." >> performance-summary.md
+          echo "" >> performance-summary.md
+        fi
+        
+        # Frontend performance
+        if [ -d "lighthouse-results-${{ github.run_number }}" ]; then
+          echo "## Frontend Performance (Lighthouse)" >> performance-summary.md
+          echo "Lighthouse audit results available in artifacts." >> performance-summary.md
+          echo "" >> performance-summary.md
+        fi
+        
+        # Job status summary
+        echo "## Test Status" >> performance-summary.md
+        echo "- Load Testing: ${{ needs.load-testing.result }}" >> performance-summary.md
+        echo "- Database Performance: ${{ needs.database-performance.result }}" >> performance-summary.md
+        echo "- Frontend Performance: ${{ needs.frontend-performance.result }}" >> performance-summary.md
+    
+    - name: Check for performance regressions
+      run: |
+        # This would typically compare against baseline metrics
+        # For now, we'll check if any tests failed
+        
+        FAILED_TESTS=""
+        
+        if [ "${{ needs.load-testing.result }}" = "failure" ]; then
+          FAILED_TESTS="$FAILED_TESTS Load Testing,"
+        fi
+        
+        if [ "${{ needs.database-performance.result }}" = "failure" ]; then
+          FAILED_TESTS="$FAILED_TESTS Database Performance,"
+        fi
+        
+        if [ "${{ needs.frontend-performance.result }}" = "failure" ]; then
+          FAILED_TESTS="$FAILED_TESTS Frontend Performance,"
+        fi
+        
+        if [ -n "$FAILED_TESTS" ]; then
+          echo "PERFORMANCE_REGRESSION=true" >> $GITHUB_ENV
+          echo "FAILED_TESTS=${FAILED_TESTS%,}" >> $GITHUB_ENV
+        else
+          echo "PERFORMANCE_REGRESSION=false" >> $GITHUB_ENV
+        fi
+    
+    - name: Create performance issue on regression
+      if: env.PERFORMANCE_REGRESSION == 'true'
+      uses: actions/github-script@v6
+      with:
+        script: |
+          const title = `🐌 Performance Regression Detected - ${new Date().toISOString().split('T')[0]}`;
+          const body = `
+          ## Performance Regression Alert
+          
+          **Workflow Run:** ${{ github.run_id }}
+          **Branch:** ${{ github.ref_name }}
+          **Commit:** ${{ github.sha }}
+          
+          ### Failed Performance Tests:
+          ${process.env.FAILED_TESTS}
+          
+          ### Action Required:
+          1. Review performance test artifacts
+          2. Identify performance bottlenecks
+          3. Optimize code or infrastructure
+          4. Re-run performance tests
+          5. Close this issue once resolved
+          
+          ### Artifacts:
+          - Load test reports
+          - Database benchmark results
+          - Lighthouse audit results
+          `;
+          
+          github.rest.issues.create({
+            owner: context.repo.owner,
+            repo: context.repo.repo,
+            title: title,
+            body: body,
+            labels: ['performance', 'regression', 'high-priority']
+          });
+    
+    - name: Upload performance summary
+      uses: actions/upload-artifact@v3
+      with:
+        name: performance-summary-${{ github.run_number }}
+        path: performance-summary.md
+        retention-days: 90
