@@ -776,16 +776,37 @@ jobs:
     - name: Checkout code
       uses: actions/checkout@v4
     
+    - name: Set up Docker Buildx
+      uses: docker/setup-buildx-action@v3
+    
+    - name: Install Docker Compose
+      run: |
+        sudo curl -L "https://github.com/docker/compose/releases/download/v2.24.1/docker-compose-$(uname -s)-$(uname -m)" -o /usr/local/bin/docker-compose
+        sudo chmod +x /usr/local/bin/docker-compose
+        docker-compose --version
+    
+    - name: Log in to Container Registry
+      uses: docker/login-action@v3
+      with:
+        registry: ${{ env.REGISTRY }}
+        username: ${{ github.actor }}
+        password: ${{ secrets.GITHUB_TOKEN }}
+    
     - name: Deploy to Development
+      env:
+        REGISTRY: ${{ env.REGISTRY }}
+        IMAGE_NAME: ${{ env.IMAGE_NAME }}
+        DOCKER_TAG: ${{ needs.determine-environment.outputs.docker_tag }}
       run: |
         echo "🔧 Deploying to Development environment (fallback)..."
         echo "Using docker tag: ${{ needs.determine-environment.outputs.docker_tag }}"
+        echo "Registry: $REGISTRY"
+        echo "Image: $IMAGE_NAME"
         
         # Pull and deploy to development
         docker-compose -f docker-compose.dev.yml pull
         docker-compose -f docker-compose.dev.yml down
         
-        export DOCKER_TAG=${{ needs.determine-environment.outputs.docker_tag }}
         docker-compose -f docker-compose.dev.yml up -d
         
         # Wait for services to start
