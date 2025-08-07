@@ -10,27 +10,6 @@ on:
     # Run performance tests weekly on Sunday at 3 AM UTC
     - cron: '0 3 * * 0'
   workflow_dispatch:
-    inputs:
-      environment:
-        description: 'Target environment for testing'
-        required: true
-        default: 'qa'
-        type: choice
-        options:
-          - qa
-          - uat
-          - sandbox
-          - production
-      test_duration:
-        description: 'Test duration in minutes'
-        required: false
-        default: '10'
-        type: string
-      concurrent_users:
-        description: 'Number of concurrent users'
-        required: false
-        default: '50'
-        type: string
   push:
     branches:
       - main
@@ -185,8 +164,8 @@ jobs:
     
     - name: Run Locust load test
       run: |
-        USERS=${{ github.event.inputs.concurrent_users || '50' }}
-        DURATION=${{ github.event.inputs.test_duration || '10' }}
+        USERS=50
+        DURATION=10
         
         echo "Running load test with $USERS users for ${DURATION}m"
         

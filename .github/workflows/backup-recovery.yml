@@ -12,31 +12,6 @@ on:
     # Weekly full backup on Sunday at 2 AM UTC
     - cron: '0 2 * * 0'
   workflow_dispatch:
-    inputs:
-      backup_type:
-        description: 'Type of backup to perform'
-        required: true
-        default: 'incremental'
-        type: choice
-        options:
-          - incremental
-          - full
-          - database-only
-          - media-only
-      environment:
-        description: 'Environment to backup'
-        required: true
-        default: 'production'
-        type: choice
-        options:
-          - production
-          - uat
-          - qa
-      restore_test:
-        description: 'Test restore after backup'
-        required: false
-        default: false
-        type: boolean
 
 env:
   AWS_REGION: us-east-1
@@ -49,7 +24,7 @@ jobs:
   database-backup:
     name: Database Backup
     runs-on: ubuntu-latest
-    if: github.event.inputs.backup_type != 'media-only'
+
     
     steps:
     - name: Checkout code
@@ -64,8 +39,8 @@ jobs:
     
     - name: Set backup variables
       run: |
-        ENVIRONMENT="${{ github.event.inputs.environment || 'production' }}"
-        BACKUP_TYPE="${{ github.event.inputs.backup_type || 'incremental' }}"
+        ENVIRONMENT="production"
+        BACKUP_TYPE="incremental"
         TIMESTAMP=$(date +"%Y%m%d_%H%M%S")
         
         echo "ENVIRONMENT=$ENVIRONMENT" >> $GITHUB_ENV
@@ -189,7 +164,7 @@ jobs:
   media-backup:
     name: Media Files Backup
     runs-on: ubuntu-latest
-    if: github.event.inputs.backup_type != 'database-only'
+
     
     steps:
     - name: Checkout code
@@ -204,7 +179,7 @@ jobs:
     
     - name: Set backup variables
       run: |
-        ENVIRONMENT="${{ github.event.inputs.environment || 'production' }}"
+        ENVIRONMENT="production"
         TIMESTAMP=$(date +"%Y%m%d_%H%M%S")
         
         echo "ENVIRONMENT=$ENVIRONMENT" >> $GITHUB_ENV
@@ -264,7 +239,7 @@ jobs:
     
     - name: Create configuration backup
       run: |
-        ENVIRONMENT="${{ github.event.inputs.environment || 'production' }}"
+        ENVIRONMENT="production"
         TIMESTAMP=$(date +"%Y%m%d_%H%M%S")
         CONFIG_BACKUP_FILE="educore-$ENVIRONMENT-config-$TIMESTAMP.tar.gz"
         
@@ -290,7 +265,7 @@ jobs:
     name: Backup Verification
     runs-on: ubuntu-latest
     needs: [database-backup]
-    if: github.event.inputs.restore_test == 'true' || github.event.schedule == '0 2 * * 0'
+    if: github.event.schedule == '0 2 * * 0'
     
     services:
       postgres:
@@ -369,7 +344,7 @@ jobs:
     
     - name: Generate disaster recovery report
       run: |
-        ENVIRONMENT="${{ github.event.inputs.environment || 'production' }}"
+        ENVIRONMENT="production"
         TIMESTAMP=$(date +"%Y-%m-%d %H:%M:%S UTC")
         
         cat > disaster-recovery-report.md << EOF
@@ -394,7 +369,7 @@ jobs:
         2. Restore using: \`pg_restore -h <host> -U <user> -d <database> <backup_file>\`
         
         ### Media Files Recovery
-        1. Sync from backup: \`aws s3 sync s3://$BACKUP_BUCKET/educore-$ENVIRONMENT-media/<timestamp>/ s3://<target-bucket>/\`
+        1. Sync from backup: \`aws s3 sync s3://$BACKUP_BUCKET/educore-production-media/<timestamp>/ s3://<target-bucket>/\`
         
         ### Configuration Recovery
         1. Download config backup from S3
@@ -466,7 +441,7 @@ jobs:
       uses: actions/github-script@v6
       with:
         script: |
-          const environment = '${{ github.event.inputs.environment }}' || 'production';
+          const environment = 'production';
           const title = `🚨 Backup Failure - ${environment.toUpperCase()} - ${new Date().toISOString().split('T')[0]}`;
           const body = `
           ## Backup Failure Alert
@@ -500,7 +475,7 @@ jobs:
     - name: Send success notification
       if: env.OVERALL_STATUS == 'success'
       run: |
-        ENVIRONMENT="${{ github.event.inputs.environment || 'production' }}"
+        ENVIRONMENT="production"
         echo "✅ Backup completed successfully for $ENVIRONMENT environment"
         echo "📊 All backup components completed without errors"
         echo "🔒 Data protection and disaster recovery capabilities maintained"
