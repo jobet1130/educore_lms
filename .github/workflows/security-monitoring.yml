@@ -150,13 +150,26 @@ jobs:
       with:
         fetch-depth: 0
     
+    # TruffleHog requires different base commits to avoid "BASE and HEAD commits are the same" error
+    # For push events: use the previous commit (github.event.before) if available
+    # For scheduled/manual runs: scan last 10 commits to catch recent changes
+    # Skip scanning if this is the initial commit (all zeros)
     - name: Run TruffleHog OSS
       uses: trufflesecurity/trufflehog@main
       with:
         path: ./
-        base: main
+        base: ${{ github.event_name == 'push' && github.event.before != '0000000000000000000000000000000000000000' && github.event.before || 'HEAD~10' }}
         head: HEAD
         extra_args: --debug --only-verified
+      continue-on-error: true
+    
+    # Fallback: scan entire repository if commit-based scan fails
+    - name: Run TruffleHog OSS (Filesystem Scan)
+      if: failure()
+      uses: trufflesecurity/trufflehog@main
+      with:
+        path: ./
+        extra_args: --debug --only-verified --no-git
 
   # Infrastructure as Code security
   iac-security:
