@@ -67,7 +67,10 @@ MEDIA_URL = "/media/"
 MEDIA_ROOT = os.path.join(BASE_DIR, "test_media")
 
 # Security settings for testing
-SECRET_KEY = "test-secret-key-not-for-production"
+SECRET_KEY = config(
+    "SECRET_KEY",
+    default="test-secret-key-not-for-production",
+)
 ALLOWED_HOSTS = ["localhost", "127.0.0.1", "testserver"]
 
 # Test runner settings
