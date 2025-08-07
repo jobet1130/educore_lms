@@ -447,7 +447,7 @@ jobs:
       run: |
         echo "💾 Creating pre-deployment backup..."
         # Create database backup
-        docker-compose -f docker-compose.uat.yml exec -T db pg_dump -U postgres educore_lms > backup_$(date +%Y%m%d_%H%M%S).sql
+        docker-compose -f docker-compose.uat.yml exec -T -e PGPASSWORD="${DB_PASSWORD:-postgres}" db pg_dump -U "${DB_USER:-postgres}" -d "${DB_NAME:-educore_db}" > backup_$(date +%Y%m%d_%H%M%S).sql
         
         # Backup static files
         tar -czf static_backup_$(date +%Y%m%d_%H%M%S).tar.gz static/
@@ -551,17 +551,55 @@ jobs:
         docker-compose --version
     
     - name: Pre-deployment Backup
+      env:
+        DB_NAME: ${{ secrets.DB_NAME || 'educore_db' }}
+        DB_USER: ${{ secrets.DB_USER || 'postgres' }}
+        DB_PASSWORD: ${{ secrets.DB_PASSWORD || 'weaknaweak27' }}
       run: |
         echo "💾 Creating comprehensive production backup..."
+        echo "📋 Using database: $DB_NAME with user: $DB_USER"
+        
+        # Check if production services are running
+        if ! docker-compose -f docker-compose.prod.yml ps | grep -q "Up"; then
+          echo "🚀 Starting production services for backup..."
+          docker-compose -f docker-compose.prod.yml up -d db
+          
+          # Wait for database to be ready
+          echo "⏳ Waiting for database to be ready..."
+          for i in {1..30}; do
+            if docker-compose -f docker-compose.prod.yml exec -T db pg_isready -U "$DB_USER"; then
+              echo "✅ Database is ready"
+              break
+            fi
+            echo "Attempt $i failed, retrying in 5 seconds..."
+            sleep 5
+          done
+        fi
+        
         # Create timestamped database backup
         BACKUP_TIME=$(date +%Y%m%d_%H%M%S)
-        docker-compose -f docker-compose.prod.yml exec -T db pg_dump -U postgres educore_lms > backup_prod_${BACKUP_TIME}.sql
+        echo "📊 Creating database backup: backup_prod_${BACKUP_TIME}.sql"
         
-        # Backup static files and media
-        tar -czf static_backup_prod_${BACKUP_TIME}.tar.gz static/ media/
+        # Set password for pg_dump and create backup
+        docker-compose -f docker-compose.prod.yml exec -T -e PGPASSWORD="$DB_PASSWORD" db pg_dump -U "$DB_USER" -d "$DB_NAME" > backup_prod_${BACKUP_TIME}.sql
+        
+        # Verify backup was created
+        if [ -s backup_prod_${BACKUP_TIME}.sql ]; then
+          echo "✅ Database backup created successfully ($(wc -l < backup_prod_${BACKUP_TIME}.sql) lines)"
+        else
+          echo "❌ Database backup failed or is empty"
+          exit 1
+        fi
+        
+        # Backup static files and media if they exist
+        if [ -d "static" ] || [ -d "media" ]; then
+          echo "📁 Creating static files backup..."
+          tar -czf static_backup_prod_${BACKUP_TIME}.tar.gz static/ media/ 2>/dev/null || echo "⚠️ Some static/media directories not found, continuing..."
+        fi
         
         # Store backup location for potential rollback
         echo "BACKUP_FILE=backup_prod_${BACKUP_TIME}.sql" >> $GITHUB_ENV
+        echo "📋 Backup process completed"
     
     - name: Pre-deployment Validation
       run: |
@@ -679,19 +717,43 @@ jobs:
     
     - name: Rollback on Failure
       if: failure()
+      env:
+        DB_NAME: ${{ secrets.DB_NAME || 'educore_db' }}
+        DB_USER: ${{ secrets.DB_USER || 'postgres' }}
+        DB_PASSWORD: ${{ secrets.DB_PASSWORD || 'weaknaweak27' }}
       run: |
         echo "🔄 Initiating automatic rollback..."
+        echo "📋 Using database: $DB_NAME with user: $DB_USER"
+        
         # Restore from backup if deployment failed
         docker-compose -f docker-compose.prod.yml down
         
+        # Start database service for restore
+        docker-compose -f docker-compose.prod.yml up -d db
+        
+        # Wait for database to be ready
+        echo "⏳ Waiting for database to be ready for restore..."
+        for i in {1..30}; do
+          if docker-compose -f docker-compose.prod.yml exec -T db pg_isready -U "$DB_USER"; then
+            echo "✅ Database is ready for restore"
+            break
+          fi
+          echo "Attempt $i failed, retrying in 5 seconds..."
+          sleep 5
+        done
+        
         # Restore database
         if [ -f "$BACKUP_FILE" ]; then
-          docker-compose -f docker-compose.prod.yml exec -T db psql -U postgres -d educore_lms < "$BACKUP_FILE"
+          echo "📊 Restoring database from backup: $BACKUP_FILE"
+          docker-compose -f docker-compose.prod.yml exec -T -e PGPASSWORD="$DB_PASSWORD" db psql -U "$DB_USER" -d "$DB_NAME" < "$BACKUP_FILE"
+          echo "✅ Database restored from backup"
+        else
+          echo "⚠️ No backup file found: $BACKUP_FILE"
         fi
         
         # Restart with previous version
-         docker-compose -f docker-compose.prod.yml up -d
-         echo "⚠️ Rollback completed - manual verification required"
+        docker-compose -f docker-compose.prod.yml up -d
+        echo "⚠️ Rollback completed - manual verification required"
 
   # Deploy to Development (fallback environment)
   deploy-development:
