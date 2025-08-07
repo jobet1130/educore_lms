@@ -1,5 +1,13 @@
 name: EduCore LMS CI/CD Pipeline
 
+permissions:
+  contents: read
+  security-events: write
+  actions: read
+  packages: write
+  pull-requests: write
+  issues: write
+
 on:
   push:
     branches:

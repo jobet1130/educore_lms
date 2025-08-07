@@ -1,5 +1,11 @@
 name: Security Monitoring
 
+permissions:
+  contents: read
+  security-events: write
+  actions: read
+  issues: write
+
 on:
   schedule:
     # Run security scans daily at 2 AM UTC
