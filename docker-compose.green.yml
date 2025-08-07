@@ -1,0 +1,168 @@
+version: '3.8'
+
+# Green Environment - For blue-green deployment
+services:
+  web:
+    image: ghcr.io/${GITHUB_REPOSITORY:-educore/educore_lms}:${DOCKER_TAG:-latest}
+    container_name: educore_lms_web-green
+    ports:
+      - "8006:8000"  # Different port from production (8005)
+    environment:
+      - DEBUG=0
+      - SECRET_KEY=${SECRET_KEY:-django-insecure-default-key-for-local-testing}
+      - DATABASE_URL=postgres://${DB_USER:-postgres}:${DB_PASSWORD:-postgres}@db-green:5432/${DB_NAME:-educore_lms}
+      - ALLOWED_HOSTS=${ALLOWED_HOSTS:-localhost,127.0.0.1}
+      - ENVIRONMENT=green
+      - DJANGO_LOG_LEVEL=ERROR
+      - SECURE_SSL_REDIRECT=True
+      - SESSION_COOKIE_SECURE=True
+      - CSRF_COOKIE_SECURE=True
+      - SECURE_BROWSER_XSS_FILTER=True
+      - SECURE_CONTENT_TYPE_NOSNIFF=True
+      - SECURE_HSTS_SECONDS=31536000
+      - SECURE_HSTS_INCLUDE_SUBDOMAINS=True
+      - SECURE_HSTS_PRELOAD=True
+    volumes:
+      - green_static:/app/staticfiles
+      - green_media:/app/media
+      - ./logs:/app/logs
+    depends_on:
+      - db-green
+    restart: unless-stopped
+    networks:
+      - green_network
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health/"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+    deploy:
+      resources:
+        limits:
+          memory: 4G
+          cpus: '2.0'
+        reservations:
+          memory: 2G
+          cpus: '1.0'
+      restart_policy:
+        condition: on-failure
+        delay: 5s
+        max_attempts: 3
+
+  db-green:
+    image: postgres:15-alpine
+    container_name: educore_lms_db-green
+    environment:
+      - POSTGRES_DB=${DB_NAME:-educore_lms}
+      - POSTGRES_USER=${DB_USER:-postgres}
+      - POSTGRES_PASSWORD=${DB_PASSWORD:-postgres}
+    volumes:
+      - green_postgres:/var/lib/postgresql/data
+      - ./backups:/backups
+      - ./postgresql.conf:/etc/postgresql/postgresql.conf:ro
+    ports:
+      - "5441:5432"  # Different port from production (5432)
+    restart: unless-stopped
+    networks:
+      - green_network
+    deploy:
+      resources:
+        limits:
+          memory: 4G
+          cpus: '2.0'
+        reservations:
+          memory: 2G
+          cpus: '1.0'
+      restart_policy:
+        condition: on-failure
+        delay: 5s
+        max_attempts: 3
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${DB_USER:-postgres} -d ${DB_NAME:-educore_lms}"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  nginx-green:
+    image: nginx:alpine
+    container_name: educore_lms_nginx-green
+    ports:
+      - "8091:80"   # Different port from production nginx (8090)
+      - "8444:443"  # Different port from production nginx (8443)
+    volumes:
+      - ./nginx.prod.conf:/etc/nginx/nginx.conf:ro
+      - ./ssl:/etc/nginx/ssl:ro
+      - green_static:/app/staticfiles:ro
+      - green_media:/app/media:ro
+      - ./logs/nginx:/var/log/nginx
+    depends_on:
+      - web
+    restart: unless-stopped
+    networks:
+      - green_network
+    deploy:
+      resources:
+        limits:
+          memory: 512M
+          cpus: '0.5'
+        reservations:
+          memory: 256M
+          cpus: '0.25'
+      restart_policy:
+        condition: on-failure
+        delay: 5s
+        max_attempts: 3
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  # Load balancer for green environment
+  haproxy-green:
+    image: haproxy:alpine
+    container_name: educore_lms_haproxy-green
+    ports:
+      - "8007:8000"  # Different port from production haproxy (8005)
+    volumes:
+      - ./haproxy.cfg:/usr/local/etc/haproxy/haproxy.cfg:ro
+    depends_on:
+      - nginx-green
+    restart: unless-stopped
+    networks:
+      - green_network
+    profiles:
+      - ha
+    deploy:
+      resources:
+        limits:
+          memory: 256M
+          cpus: '0.3'
+
+volumes:
+  green_postgres:
+  green_static:
+  green_media:
+
+networks:
+  green_network:
+    driver: bridge
+
+secrets:
+  db_password:
+    external: true
+  redis_password:
+    external: true
+  secret_key:
+    external: true
